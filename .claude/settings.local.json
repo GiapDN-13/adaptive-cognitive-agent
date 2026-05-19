@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(uv init *)",
+      "Bash(uv add *)",
+      "Bash(uv run *)",
+      "Bash(uv pip *)",
+      "Bash(uv sync *)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:8501)",
+      "Bash(curl -s http://localhost:8501)",
+      "Bash(curl *)",
+      "Bash(pkill -f \"streamlit run\")",
+      "Bash(git add *)"
+    ]
+  }
+}
