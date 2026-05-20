@@ -4,6 +4,9 @@ from smart_agent.config import settings
 from smart_agent.graph.state import AgentState
 from smart_agent.prompts.executor import build_executor_system_prompt
 from smart_agent.tools.calculator import calculator
+from smart_agent.tools.code_executor import code_executor
+from smart_agent.tools.datetime_tool import get_datetime
+from smart_agent.tools.read_url import read_url
 from smart_agent.tools.think import think
 from smart_agent.tools.web_search import web_search
 
@@ -62,12 +65,69 @@ TOOL_DEFINITIONS = [
             },
         }
     },
+    {
+        "toolSpec": {
+            "name": "read_url",
+            "description": "Fetch and extract text content from a URL. Use after web_search to get full details from a specific page, or when user provides a URL directly.",
+            "inputSchema": {
+                "json": {
+                    "type": "object",
+                    "properties": {
+                        "url": {
+                            "type": "string",
+                            "description": "The URL to fetch and read",
+                        }
+                    },
+                    "required": ["url"],
+                }
+            },
+        }
+    },
+    {
+        "toolSpec": {
+            "name": "code_executor",
+            "description": "Execute Python code and return the output. Use for data processing, generating content programmatically, testing algorithms, or any task that benefits from running actual code.",
+            "inputSchema": {
+                "json": {
+                    "type": "object",
+                    "properties": {
+                        "code": {
+                            "type": "string",
+                            "description": "Python code to execute",
+                        }
+                    },
+                    "required": ["code"],
+                }
+            },
+        }
+    },
+    {
+        "toolSpec": {
+            "name": "get_datetime",
+            "description": "Get the current date, time, and day of week. Use when the user asks about today's date, current time, or when you need to reference the current date in your response.",
+            "inputSchema": {
+                "json": {
+                    "type": "object",
+                    "properties": {
+                        "timezone_offset": {
+                            "type": "number",
+                            "description": "UTC offset in hours (default: 7 for Vietnam)",
+                        }
+                    },
+                    "required": [],
+                }
+            },
+        }
+    },
 ]
 
 TOOL_DISPATCH = {
     "calculator": lambda params: calculator(params["expression"]),
     "think": lambda params: think(params["thought"]),
     "web_search": lambda params: web_search(params["query"]),
+    "read_url": lambda params: read_url(params["url"]),
+    "code_executor": lambda params: code_executor(params["code"]),
+    "get_datetime": lambda params: get_datetime(params.get("timezone_offset", 7)),
 }
 
 
