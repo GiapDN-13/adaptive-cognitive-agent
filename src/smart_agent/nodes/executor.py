@@ -189,12 +189,13 @@ def executor_node(state: AgentState) -> dict:
 
     tool_calls_log = []
     iterations = 0
+    accumulated_text = ""
 
     for i in range(max_iterations):
         iterations += 1
         is_last_iteration = i == max_iterations - 1
 
-        if is_last_iteration:
+        if is_last_iteration and not accumulated_text:
             messages.append({
                 "role": "user",
                 "content": [{"text": "You have used all available iterations. Provide your final comprehensive answer NOW based on everything you've gathered so far. Do NOT call any more tools — respond with text only."}],
@@ -220,10 +221,20 @@ def executor_node(state: AgentState) -> dict:
                 if "text" in block:
                     final_text += block["text"]
             return {
-                "final_output": final_text,
+                "final_output": accumulated_text + final_text,
                 "tool_calls": tool_calls_log,
                 "react_iterations": iterations,
             }
+
+        if stop_reason == "max_tokens":
+            for block in content_blocks:
+                if "text" in block:
+                    accumulated_text += block["text"]
+            messages.append({
+                "role": "user",
+                "content": [{"text": "Continue exactly where you left off. Do not repeat what you already wrote."}],
+            })
+            continue
 
         if stop_reason == "tool_use":
             tool_results = []
@@ -261,7 +272,7 @@ def executor_node(state: AgentState) -> dict:
                 if "text" in block:
                     final_text += block["text"]
             return {
-                "final_output": final_text or "[No output generated]",
+                "final_output": accumulated_text + final_text or "[No output generated]",
                 "tool_calls": tool_calls_log,
                 "react_iterations": iterations,
             }
@@ -272,7 +283,7 @@ def executor_node(state: AgentState) -> dict:
             last_text += block["text"]
 
     return {
-        "final_output": last_text or "[Max iterations reached]",
+        "final_output": accumulated_text + last_text or "[Max iterations reached]",
         "tool_calls": tool_calls_log,
         "react_iterations": iterations,
     }
