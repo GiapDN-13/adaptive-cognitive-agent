@@ -131,6 +131,26 @@ TOOL_DISPATCH = {
 }
 
 
+def _is_incomplete(text: str) -> bool:
+    """Detect if output was cut off mid-generation."""
+    if not text or len(text) < 200:
+        return False
+    text_lower = text.lower().strip()
+    # HTML that didn't close
+    if "<html" in text_lower and "</html>" not in text_lower:
+        return True
+    if "<body" in text_lower and "</body>" not in text_lower:
+        return True
+    # Markdown code block not closed
+    if text.count("```") % 2 != 0:
+        return True
+    # Ends mid-sentence (no terminal punctuation in last 100 chars)
+    last_chunk = text[-100:]
+    if not any(last_chunk.rstrip().endswith(c) for c in [".", "!", "?", "`", ">", "}", ")", "]", ";"]):
+        return True
+    return False
+
+
 def _get_max_iterations(depth: int) -> int:
     if depth <= 2:
         return 4
@@ -220,8 +240,18 @@ def executor_node(state: AgentState) -> dict:
             for block in content_blocks:
                 if "text" in block:
                     final_text += block["text"]
+            combined = accumulated_text + final_text
+
+            if _is_incomplete(combined) and i < max_iterations - 1:
+                accumulated_text = combined
+                messages.append({
+                    "role": "user",
+                    "content": [{"text": "Your output is incomplete — it appears to be cut off mid-way. Continue EXACTLY where you stopped. Do not repeat anything already written."}],
+                })
+                continue
+
             return {
-                "final_output": accumulated_text + final_text,
+                "final_output": combined,
                 "tool_calls": tool_calls_log,
                 "react_iterations": iterations,
             }
