@@ -18,9 +18,9 @@ def perceiver_node(state: AgentState) -> dict:
     history = state.get("conversation_history", [])
     history_context = ""
     if history:
-        recent = history[-6:]
+        recent = history[-10:]
         history_context = "\n".join(
-            f"{'User' if m['role'] == 'user' else 'Assistant'}: {m['content'][:200]}"
+            f"{'User' if m['role'] == 'user' else 'Assistant'}: {m['content'][:1000]}"
             for m in recent
         )
 

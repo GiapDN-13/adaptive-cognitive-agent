@@ -22,7 +22,7 @@ class BedrockLLMClient:
             aws_access_key_id=settings.aws_access_key_id,
             aws_secret_access_key=settings.aws_secret_access_key,
             region_name=settings.aws_region,
-            config=Config(read_timeout=300, connect_timeout=10),
+            config=Config(read_timeout=600, connect_timeout=15),
         )
 
     def call_flash(

@@ -30,7 +30,7 @@ def cognitive_node(state: AgentState) -> dict:
     # Step 2: Knowledge
     prompt_2 = STEP_2_KNOWLEDGE.format(
         user_input=user_input,
-        step_1_output=resp_1.text[:2000],
+        step_1_output=resp_1.text[:4000],
     )
     resp_2 = llm_client.call_flash(prompt_2, temperature=0.3)
     steps_output["knowledge"] = resp_2.text
@@ -38,8 +38,8 @@ def cognitive_node(state: AgentState) -> dict:
     # Step 3: Requirements
     prompt_3 = STEP_3_REQUIREMENTS.format(
         user_input=user_input,
-        step_1_output=resp_1.text[:1500],
-        step_2_output=resp_2.text[:1500],
+        step_1_output=resp_1.text[:3000],
+        step_2_output=resp_2.text[:3000],
     )
     resp_3 = llm_client.call_flash(prompt_3, temperature=0.3)
     steps_output["requirements"] = resp_3.text
@@ -47,9 +47,9 @@ def cognitive_node(state: AgentState) -> dict:
     # Step 4: Goals
     prompt_4 = STEP_4_GOALS.format(
         user_input=user_input,
-        step_1_output=resp_1.text[:1000],
-        step_2_output=resp_2.text[:1000],
-        step_3_output=resp_3.text[:1500],
+        step_1_output=resp_1.text[:2000],
+        step_2_output=resp_2.text[:2000],
+        step_3_output=resp_3.text[:3000],
     )
     resp_4 = llm_client.call_flash(prompt_4, temperature=0.3)
     steps_output["goals"] = resp_4.text
@@ -57,10 +57,10 @@ def cognitive_node(state: AgentState) -> dict:
     # Step 5: Evaluation
     prompt_5 = STEP_5_EVALUATION.format(
         user_input=user_input,
-        step_1_output=resp_1.text[:800],
-        step_2_output=resp_2.text[:800],
-        step_3_output=resp_3.text[:800],
-        step_4_output=resp_4.text[:800],
+        step_1_output=resp_1.text[:2000],
+        step_2_output=resp_2.text[:2000],
+        step_3_output=resp_3.text[:2000],
+        step_4_output=resp_4.text[:2000],
     )
     resp_5 = llm_client.call_flash(prompt_5, temperature=0.3)
     steps_output["evaluation"] = resp_5.text

@@ -36,7 +36,7 @@ def evaluator_node(state: AgentState) -> dict:
         language=language,
         language_name=language_name,
         quality_gates=gates_text,
-        output=output[:3000],
+        output=output[:8000],
     )
 
     response = llm_client.call_flash(

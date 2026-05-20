@@ -133,10 +133,10 @@ TOOL_DISPATCH = {
 
 def _get_max_iterations(depth: int) -> int:
     if depth <= 2:
-        return 3
-    if depth == 3:
         return 4
-    return 6
+    if depth == 3:
+        return 6
+    return 8
 
 
 def _get_max_tokens(depth: int) -> int:
@@ -156,7 +156,7 @@ def executor_node(state: AgentState) -> dict:
         aws_access_key_id=settings.aws_access_key_id,
         aws_secret_access_key=settings.aws_secret_access_key,
         region_name=settings.aws_region,
-        config=Config(read_timeout=300, connect_timeout=10),
+        config=Config(read_timeout=600, connect_timeout=15),
     )
 
     system_prompt = build_executor_system_prompt(
@@ -176,11 +176,12 @@ def executor_node(state: AgentState) -> dict:
     user_text = state["user_input"]
     history = state.get("conversation_history", [])
     if history:
-        recent = history[-6:]
+        recent = history[-10:]
+        max_chars_per_msg = 4000 if depth >= 3 else 2000
         context_lines = []
         for m in recent:
             role = "User" if m["role"] == "user" else "Assistant"
-            context_lines.append(f"{role}: {m['content'][:500]}")
+            context_lines.append(f"{role}: {m['content'][:max_chars_per_msg]}")
         context = "\n".join(context_lines)
         user_text = f"[Conversation context]\n{context}\n\n[Current request]\n{user_text}"
 
