@@ -13,6 +13,6 @@ def code_executor(code: str) -> str:
             last_var = list(local_vars.values())[-1]
             if last_var is not None:
                 output = str(last_var)
-        return output[:3000] if output else "(no output)"
+        return output[:15000] if output else "(no output)"
     except Exception as e:
         return f"Error: {type(e).__name__}: {e}"

@@ -65,7 +65,21 @@ def build_executor_system_prompt(
         f"- Use calculator for any math/computation\n"
         f"- If web_search returns no results, use placeholders instead of inventing data\n"
         f"- Your response must satisfy ALL quality gates above\n"
-        f"- Be thorough but avoid unnecessary padding"
+        f"- Be thorough but avoid unnecessary padding\n\n"
+        f"## CRITICAL: Long Content Generation Strategy\n"
+        f"When generating long content (HTML pages, full documents, long code), "
+        f"you MUST use the code_executor tool to build the content in parts:\n"
+        f"1. Use think() to plan the structure/outline first\n"
+        f"2. Use code_executor() to generate EACH SECTION as a Python string, printing it\n"
+        f"3. In your final response, combine all sections into the complete output\n\n"
+        f"Example for HTML landing page:\n"
+        f"- Step 1: think() → plan sections (head/css, hero, services, about, contact, footer)\n"
+        f"- Step 2: code_executor() → print the <head> and CSS section\n"
+        f"- Step 3: code_executor() → print the <body> hero + services section\n"
+        f"- Step 4: code_executor() → print the about + contact + footer section\n"
+        f"- Step 5: Final response = concatenate all printed outputs\n\n"
+        f"This ensures COMPLETE output that never gets cut off. "
+        f"NEVER try to write a full HTML page in a single response — it WILL be truncated."
     )
 
     return "\n".join(sections)
