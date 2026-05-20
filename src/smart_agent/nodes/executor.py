@@ -47,7 +47,7 @@ TOOL_DEFINITIONS = [
     {
         "toolSpec": {
             "name": "web_search",
-            "description": "Search the web for current information. Use when you need up-to-date data, facts, or information not in your training data.",
+            "description": "Search the web for real information. ALWAYS use this when the user mentions a specific company, product, person, or entity to get REAL facts. Also use for current data, statistics, or any info not in your training data. Search BEFORE writing content about specific entities.",
             "inputSchema": {
                 "json": {
                     "type": "object",

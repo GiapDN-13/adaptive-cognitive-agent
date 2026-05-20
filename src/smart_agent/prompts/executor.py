@@ -59,7 +59,11 @@ def build_executor_system_prompt(
         f"\n## Instructions\n"
         f"- Respond in {lang_name}\n"
         f"- Think step by step before answering\n"
-        f"- Use tools when you need computation or external information\n"
+        f"- IMPORTANT: When the user mentions a specific company, product, or entity — "
+        f"use web_search to find REAL information about them BEFORE writing content. "
+        f"Search first, then write based on real data.\n"
+        f"- Use calculator for any math/computation\n"
+        f"- If web_search returns no results, use placeholders instead of inventing data\n"
         f"- Your response must satisfy ALL quality gates above\n"
         f"- Be thorough but avoid unnecessary padding"
     )
