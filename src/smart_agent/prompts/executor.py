@@ -32,6 +32,20 @@ def build_executor_system_prompt(
         cog_text = _format_cognitive_output(cognitive_output)
         sections.append(f"\n## Strategic Framework Analysis\n{cog_text}")
 
+    sections.append(
+        "\n## CRITICAL: Anti-Hallucination Rules\n"
+        "- NEVER fabricate specific factual details the user has NOT provided: "
+        "company names, phone numbers, addresses, emails, pricing, team names, "
+        "testimonials, statistics, or any claim presented as fact.\n"
+        "- If specific info is needed but missing, use EXPLICIT PLACEHOLDERS: "
+        "[TÊN CÔNG TY], [SỐ ĐIỆN THOẠI], [ĐỊA CHỈ], [EMAIL], [DỊCH VỤ CỤ THỂ], [GIÁ].\n"
+        "- At the end of your response, list missing info: "
+        "'⚠️ Cần bổ sung: [list what placeholders need to be filled]'.\n"
+        "- Only include specifics that: (a) user explicitly stated, "
+        "(b) verifiable general knowledge, or (c) obtained via web_search.\n"
+        "- It is BETTER to have placeholders than to invent convincing-sounding fake data."
+    )
+
     lang_name = "Vietnamese" if language == "vi" else "English"
     sections.append(
         f"\n## Instructions\n"

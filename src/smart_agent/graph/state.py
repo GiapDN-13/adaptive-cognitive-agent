@@ -18,6 +18,8 @@ class AgentState(TypedDict, total=False):
 
     # Clarification
     clarification_questions: list[str]
+    clarification_round: int
+    missing_info: list[str]
 
     # Meta-Thinker output
     persona: str

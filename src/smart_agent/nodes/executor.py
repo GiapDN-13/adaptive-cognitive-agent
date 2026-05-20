@@ -79,6 +79,14 @@ def _get_max_iterations(depth: int) -> int:
     return 6
 
 
+def _get_max_tokens(depth: int) -> int:
+    if depth <= 2:
+        return 4096
+    if depth == 3:
+        return 8192
+    return 16384
+
+
 def executor_node(state: AgentState) -> dict:
     import boto3
     from botocore.config import Config
@@ -102,6 +110,7 @@ def executor_node(state: AgentState) -> dict:
 
     depth = state.get("thinking_depth", 3)
     max_iterations = _get_max_iterations(depth)
+    max_tokens = _get_max_tokens(depth)
 
     # Build user message with conversation context
     user_text = state["user_input"]
@@ -135,7 +144,7 @@ def executor_node(state: AgentState) -> dict:
             system=[{"text": system_prompt}],
             messages=messages,
             toolConfig={"tools": TOOL_DEFINITIONS},
-            inferenceConfig={"temperature": 0.4, "maxTokens": 4096},
+            inferenceConfig={"temperature": 0.4, "maxTokens": max_tokens},
         )
 
         stop_reason = response.get("stopReason", "")

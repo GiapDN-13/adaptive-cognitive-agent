@@ -15,6 +15,33 @@ from smart_agent.nodes.perceiver import perceiver_node
 from smart_agent.nodes.retry import retry_node
 from smart_agent.nodes.trivial import trivial_node
 
+def _check_info_sufficiency(original_request: str, user_answers: str) -> list[str]:
+    """Quick LLM check: are critical details still missing that would require fabrication?"""
+    from smart_agent.llm import llm_client
+
+    prompt = f"""Given this task and the user's answers, identify if CRITICAL specific details are still missing.
+
+Original task: {original_request}
+User's answers: {user_answers}
+
+Critical = details that if missing, the AI would have to FABRICATE specific facts (company name, phone numbers, addresses, specific services, pricing, real names, etc.)
+
+Return JSON:
+- "needs_more": boolean (true only if critical factual details are genuinely missing)
+- "missing_info": list of strings describing what's still missing (empty if needs_more is false)
+
+Be conservative: if the user gave enough context to produce useful output (even with some placeholders), set needs_more=false. Only return true if the output would be mostly fabricated."""
+
+    response = llm_client.call_flash(
+        prompt,
+        system_instruction="Return only valid JSON. Be conservative — only flag truly critical missing info.",
+    )
+
+    if response.parsed and response.parsed.get("needs_more"):
+        return response.parsed.get("missing_info", [])
+    return []
+
+
 st.set_page_config(page_title="SmartAgent by MekongAI", page_icon="🧠", layout="wide")
 
 st.title("🧠 SmartAgent")
@@ -24,6 +51,8 @@ if "messages" not in st.session_state:
     st.session_state.messages = []
 if "pending_clarification" not in st.session_state:
     st.session_state.pending_clarification = None
+if "last_task_context" not in st.session_state:
+    st.session_state.last_task_context = None
 
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
@@ -44,6 +73,7 @@ if user_input:
 
         if is_post_clarification:
             orig = st.session_state.pending_clarification
+            clarification_round = orig.get("clarification_round", 1)
             enriched_input = (
                 f"Original request: {orig['original_input']}\n\n"
                 f"Clarification Q&A:\n"
@@ -56,6 +86,31 @@ if user_input:
                 "conversation_history": st.session_state.messages[:-1],
             }
             st.session_state.pending_clarification = None
+
+            # Check sufficiency (max 2 rounds)
+            if clarification_round < 2:
+                missing = _check_info_sufficiency(orig["original_input"], user_input)
+                if missing:
+                    state.update({
+                        "language": orig.get("language", "vi"),
+                        "domains": orig.get("domains", ["general"]),
+                        "missing_info": missing,
+                        "clarification_round": clarification_round,
+                    })
+                    from smart_agent.nodes.clarifier import clarifier_node as _clar
+                    clar_result = _clar(state)
+                    st.caption(f"🔍 Vẫn thiếu thông tin: {', '.join(missing)}")
+                    st.markdown(clar_result.get("final_output", ""))
+                    st.session_state.messages.append({"role": "assistant", "content": clar_result.get("final_output", "")})
+                    st.session_state.pending_clarification = {
+                        "original_input": orig["original_input"],
+                        "questions": clar_result.get("clarification_questions", []),
+                        "language": orig.get("language", "vi"),
+                        "domains": orig.get("domains", ["general"]),
+                        "complexity_score": orig.get("complexity_score", 5),
+                        "clarification_round": clarification_round + 1,
+                    }
+                    st.stop()
 
             # Skip perceiver — we already know this needs full pipeline
             state.update({
@@ -88,14 +143,22 @@ if user_input:
                     f"**Clarify:** `{state.get('needs_clarification')}`"
                 )
 
-        # Trivial path
+        # Trivial path — guard against false trivial on follow-ups
         if state.get("is_trivial"):
-            with st.status("💬 Trả lời nhanh...", expanded=False) as s:
-                trivial_result = trivial_node(state)
-                state.update(trivial_result)
-                s.update(label="💬 Trivial response", state="complete")
-            st.markdown(state.get("final_output", ""))
-            st.session_state.messages.append({"role": "assistant", "content": state.get("final_output", "")})
+            if st.session_state.last_task_context and len(st.session_state.messages) > 2:
+                state["is_trivial"] = False
+                state["needs_clarification"] = False
+                ctx = st.session_state.last_task_context
+                state["complexity_score"] = ctx.get("complexity_score", 5)
+                state["domains"] = ctx.get("domains", ["general"])
+                st.caption("🔄 Phát hiện follow-up — tiếp tục pipeline")
+            else:
+                with st.status("💬 Trả lời nhanh...", expanded=False) as s:
+                    trivial_result = trivial_node(state)
+                    state.update(trivial_result)
+                    s.update(label="💬 Trivial response", state="complete")
+                st.markdown(state.get("final_output", ""))
+                st.session_state.messages.append({"role": "assistant", "content": state.get("final_output", "")})
 
         # Clarification path
         elif state.get("needs_clarification"):
@@ -210,6 +273,18 @@ if user_input:
             final = state.get("best_output") or state.get("final_output", "")
             st.markdown(final)
             st.session_state.messages.append({"role": "assistant", "content": final})
+
+            # Save task context for follow-up detection
+            st.session_state.last_task_context = {
+                "original_input": state["user_input"],
+                "language": state.get("language", "vi"),
+                "domains": state.get("domains", ["general"]),
+                "complexity_score": state.get("complexity_score", 5),
+                "persona": state.get("persona", "Generalist"),
+                "thinking_depth": state.get("thinking_depth", 3),
+                "domain_rules": state.get("domain_rules", []),
+                "quality_gates": state.get("quality_gates", []),
+            }
 
           except Exception as e:
             import traceback

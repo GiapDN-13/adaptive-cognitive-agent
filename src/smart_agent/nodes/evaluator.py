@@ -11,6 +11,7 @@ class EvaluatorOutput(BaseModel):
     accuracy: float
     actionability: float
     language_correct: bool
+    contains_fabrication: bool
     gate_violations: list[str]
     feedback: str
 
@@ -60,6 +61,9 @@ def evaluator_node(state: AgentState) -> dict:
         avg_score = sum(scores.values()) / 4
         if not data.get("language_correct", True):
             avg_score -= 2.0
+        if data.get("contains_fabrication", False):
+            avg_score -= 3.0
+            scores["accuracy"] = min(scores["accuracy"], 3)
 
         passed = avg_score >= 6.0
         feedback = data.get("feedback", "")
