@@ -18,7 +18,7 @@ class EvaluatorOutput(BaseModel):
 
 def evaluator_node(state: AgentState) -> dict:
     output = state.get("final_output", "")
-    if not output or output.startswith("[TODO]") or output.startswith("[Max"):
+    if not output or output.startswith("[TODO]") or output.startswith("[Max") or output.startswith("[No output"):
         return {
             "eval_scores": {"relevance": 0, "completeness": 0, "accuracy": 0, "actionability": 0},
             "eval_passed": False,

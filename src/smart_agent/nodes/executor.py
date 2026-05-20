@@ -141,10 +141,10 @@ def _get_max_iterations(depth: int) -> int:
 
 def _get_max_tokens(depth: int) -> int:
     if depth <= 2:
-        return 8192
-    if depth == 3:
         return 16384
-    return 32000
+    if depth == 3:
+        return 32000
+    return 64000
 
 
 def executor_node(state: AgentState) -> dict:
