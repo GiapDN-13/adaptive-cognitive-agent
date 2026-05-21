@@ -28,3 +28,14 @@ export async function uploadFile(sessionId: string, file: File): Promise<{ path:
 export function getFileDownloadUrl(sessionId: string, path: string): string {
   return `${BASE_URL}/sessions/${sessionId}/files${path}`
 }
+
+export async function getSessionStats(sessionId: string): Promise<{
+  status: string
+  running: boolean
+  cpu_percent: number
+  memory_mb: number
+}> {
+  const res = await fetch(`${BASE_URL}/sessions/${sessionId}/stats`)
+  if (!res.ok) return { status: 'unknown', running: false, cpu_percent: 0, memory_mb: 0 }
+  return res.json()
+}

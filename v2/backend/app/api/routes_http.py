@@ -1,9 +1,10 @@
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from fastapi.responses import Response
 
-from app.deps import get_session_manager, get_file_manager
+from app.deps import get_session_manager, get_file_manager, get_docker_manager
 from app.core.session_manager import SessionManager
 from app.core.file_manager import FileManager
+from app.core.docker_manager import DockerManager
 from app.models.session import CreateSessionRequest, SessionResponse
 
 router = APIRouter()
@@ -96,3 +97,19 @@ async def download_file(
         raise HTTPException(404, f"File not found: {e}")
 
     return Response(content=content, media_type="application/octet-stream")
+
+
+@router.get("/sessions/{session_id}/stats")
+async def get_session_stats(
+    session_id: str,
+    sm: SessionManager = Depends(get_session_manager),
+    dm: DockerManager = Depends(get_docker_manager),
+):
+    session = await sm.get(session_id)
+    if not session:
+        raise HTTPException(404, "Session not found")
+    if not session.container_id:
+        raise HTTPException(400, "Container not ready")
+
+    stats = await dm.get_container_status(session.container_id)
+    return stats

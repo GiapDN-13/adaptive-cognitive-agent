@@ -19,14 +19,19 @@ export function useWebSocket() {
         break
 
       case 'agent_message':
-        finalizeStream()
-        addMessage({
-          id: crypto.randomUUID(),
-          role: 'assistant',
-          content: msg.content,
-          timestamp: Date.now(),
-          metadata: msg.metadata,
-        })
+        if (useChatStore.getState().streamingContent) {
+          // Text was already streamed via chunks, just finalize
+          finalizeStream()
+        } else {
+          // Non-streamed response (e.g. after tool_use)
+          addMessage({
+            id: crypto.randomUUID(),
+            role: 'assistant',
+            content: msg.content,
+            timestamp: Date.now(),
+            metadata: msg.metadata,
+          })
+        }
         setAgentWorking(false)
         break
 
@@ -63,6 +68,17 @@ export function useWebSocket() {
 
       case 'session_status':
         setContainerStatus(msg.container_status === 'running' ? 'running' : 'stopped')
+        break
+
+      case 'history_replay' as any:
+        for (const m of (msg as any).messages || []) {
+          addMessage({
+            id: crypto.randomUUID(),
+            role: m.role === 'user' ? 'user' : 'assistant',
+            content: m.content,
+            timestamp: Date.now(),
+          })
+        }
         break
 
       case 'error':

@@ -3,6 +3,7 @@ from datetime import datetime
 
 from app.config import settings
 from app.core.docker_manager import DockerManager
+from app.core.persistence import load_session_messages, delete_session_messages
 from app.models.session import ContainerConfig, Session
 
 
@@ -32,6 +33,7 @@ class SessionManager:
         session = self._sessions.pop(session_id, None)
         if session and session.container_id:
             await self._docker.destroy_container(session.container_id)
+        await delete_session_messages(session_id)
 
     async def touch(self, session_id: str) -> None:
         session = self._sessions.get(session_id)

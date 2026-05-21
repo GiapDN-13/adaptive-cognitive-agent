@@ -1,5 +1,7 @@
-import { Play, Square, Loader2 } from 'lucide-react'
+import { useState, useEffect } from 'react'
+import { Play, Square, Loader2, Cpu, HardDrive } from 'lucide-react'
 import { useChatStore } from '@/store/chatStore'
+import { getSessionStats } from '@/api/http'
 
 interface Props {
   onStart: () => void
@@ -8,6 +10,16 @@ interface Props {
 
 export function SessionPanel({ onStart, onEnd }: Props) {
   const { containerStatus, sessionId } = useChatStore()
+  const [stats, setStats] = useState({ cpu_percent: 0, memory_mb: 0 })
+
+  useEffect(() => {
+    if (!sessionId || containerStatus !== 'running') return
+    const interval = setInterval(async () => {
+      const s = await getSessionStats(sessionId)
+      setStats({ cpu_percent: s.cpu_percent, memory_mb: s.memory_mb })
+    }, 5000)
+    return () => clearInterval(interval)
+  }, [sessionId, containerStatus])
 
   return (
     <div className="flex items-center gap-3 px-4 py-2 border-b border-white/10 bg-surface/50">
@@ -23,6 +35,17 @@ export function SessionPanel({ onStart, onEnd }: Props) {
            'No session'}
         </span>
       </div>
+
+      {containerStatus === 'running' && (
+        <div className="flex items-center gap-3 text-xs text-gray-500">
+          <span className="flex items-center gap-1">
+            <Cpu size={12} /> {stats.cpu_percent.toFixed(1)}%
+          </span>
+          <span className="flex items-center gap-1">
+            <HardDrive size={12} /> {stats.memory_mb.toFixed(0)}MB
+          </span>
+        </div>
+      )}
 
       <div className="ml-auto">
         {containerStatus === 'idle' && (

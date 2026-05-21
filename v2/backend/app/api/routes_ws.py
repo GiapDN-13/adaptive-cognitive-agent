@@ -23,11 +23,18 @@ async def websocket_endpoint(
     await sm.touch(session_id)
 
     try:
+        # Send session status + chat history on connect
         await websocket.send_json({
             "type": "session_status",
             "container_status": "running",
             "session_id": session_id,
         })
+
+        if session.messages:
+            await websocket.send_json({
+                "type": "history_replay",
+                "messages": session.messages[-50:],
+            })
 
         while True:
             data = await websocket.receive_text()

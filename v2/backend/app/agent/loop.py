@@ -13,6 +13,7 @@ from app.agent.tools import (
 from app.agent.prompts import SYSTEM_PROMPT
 from app.llm.client import BedrockClient, create_llm_client
 from app.llm.streaming import stream_agent_response
+from app.core.persistence import save_session_messages
 from app.deps import _docker_manager
 
 MAX_ITERATIONS = 15
@@ -42,8 +43,24 @@ async def run_agent_loop(
     _cancel_flags[session.id] = False
 
     session.messages.append({"role": "user", "content": user_message})
+    await save_session_messages(session.id, session.messages)
 
     messages = _build_messages(session)
+
+    try:
+        await _run_loop(session, messages, ws_send)
+    except Exception as e:
+        error_msg = f"Agent error: {type(e).__name__}: {str(e)[:200]}"
+        await ws_send({"type": "error", "message": error_msg, "recoverable": True})
+        session.messages.append({"role": "assistant", "content": f"[Error] {error_msg}"})
+        await save_session_messages(session.id, session.messages)
+
+
+async def _run_loop(
+    session: Session,
+    messages: list[dict],
+    ws_send: Callable,
+):
 
     for iteration in range(MAX_ITERATIONS):
         if _cancel_flags.get(session.id):
@@ -61,7 +78,8 @@ async def run_agent_loop(
             text = _extract_text(content_blocks)
             if text:
                 session.messages.append({"role": "assistant", "content": text})
-                await ws_send({"type": "agent_message", "content": text, "metadata": {"iterations": iteration + 1}})
+                await save_session_messages(session.id, session.messages)
+                await ws_send({"type": "agent_message", "content": text, "metadata": {"iterations": iteration + 1, "streamed": True}})
             break
 
         if stop_reason == "tool_use":

@@ -166,12 +166,27 @@ class DockerManager:
             try:
                 container = self._client.containers.get(container_id)
                 container.reload()
+                stats = container.stats(stream=False)
+                cpu_pct = 0.0
+                mem_mb = 0.0
+                if stats.get("cpu_stats", {}).get("cpu_usage"):
+                    cpu_delta = stats["cpu_stats"]["cpu_usage"]["total_usage"] - \
+                                stats.get("precpu_stats", {}).get("cpu_usage", {}).get("total_usage", 0)
+                    system_delta = stats["cpu_stats"].get("system_cpu_usage", 0) - \
+                                   stats.get("precpu_stats", {}).get("system_cpu_usage", 0)
+                    if system_delta > 0:
+                        num_cpus = stats["cpu_stats"].get("online_cpus", 1)
+                        cpu_pct = (cpu_delta / system_delta) * num_cpus * 100.0
+                if stats.get("memory_stats", {}).get("usage"):
+                    mem_mb = stats["memory_stats"]["usage"] / (1024 * 1024)
                 return {
                     "status": container.status,
                     "running": container.status == "running",
+                    "cpu_percent": round(cpu_pct, 1),
+                    "memory_mb": round(mem_mb, 1),
                 }
             except NotFound:
-                return {"status": "not_found", "running": False}
+                return {"status": "not_found", "running": False, "cpu_percent": 0, "memory_mb": 0}
 
         return await asyncio.to_thread(_status)
 
