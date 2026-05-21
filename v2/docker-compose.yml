@@ -1,0 +1,36 @@
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - LLM_PROVIDER=${LLM_PROVIDER:-bedrock}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - AWS_REGION=${AWS_REGION:-us-east-1}
+      - BEDROCK_LIGHT_MODEL=${BEDROCK_LIGHT_MODEL:-us.anthropic.claude-sonnet-4-6-v1}
+      - BEDROCK_HEAVY_MODEL=${BEDROCK_HEAVY_MODEL:-us.anthropic.claude-opus-4-6-v1}
+      - SANDBOX_IMAGE=smartagent-sandbox:latest
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      sandbox-build:
+        condition: service_completed_successfully
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "5173:5173"
+    depends_on:
+      - backend
+
+  sandbox-build:
+    image: docker:cli
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./sandbox:/sandbox
+    command: docker build -t smartagent-sandbox:latest -f /sandbox/Dockerfile.sandbox /sandbox

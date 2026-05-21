@@ -8,6 +8,7 @@ from smart_agent.tools.code_executor import code_executor
 from smart_agent.tools.datetime_tool import get_datetime
 from smart_agent.tools.read_url import read_url
 from smart_agent.tools.think import think
+from smart_agent.tools.landing_page import generate_landing_page
 from smart_agent.tools.web_search import web_search
 
 TOOL_DEFINITIONS = [
@@ -119,6 +120,24 @@ TOOL_DEFINITIONS = [
             },
         }
     },
+    {
+        "toolSpec": {
+            "name": "generate_landing_page",
+            "description": "Generate a COMPLETE HTML landing page from structured JSON config. Use this tool WHENEVER the user asks to create a landing page, website, or web page. Provide a JSON object with: company_name, tagline, description, primary_color, accent_color, services (array of {name, description, icon}), features (array of strings), stats (array of {value, label}), testimonials (array of {quote, author, role}), contact ({phone, email, address}), cta_text, nav_links, hero_subtitle, footer_text. Only include fields you have REAL data for — use placeholders like [TÊN CÔNG TY] for missing info.",
+            "inputSchema": {
+                "json": {
+                    "type": "object",
+                    "properties": {
+                        "config_json": {
+                            "type": "string",
+                            "description": "JSON string containing the landing page configuration",
+                        }
+                    },
+                    "required": ["config_json"],
+                }
+            },
+        }
+    },
 ]
 
 TOOL_DISPATCH = {
@@ -128,6 +147,7 @@ TOOL_DISPATCH = {
     "read_url": lambda params: read_url(params["url"]),
     "code_executor": lambda params: code_executor(params["code"]),
     "get_datetime": lambda params: get_datetime(params.get("timezone_offset", 7)),
+    "generate_landing_page": lambda params: generate_landing_page(params["config_json"]),
 }
 
 
