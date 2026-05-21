@@ -1,3 +1,4 @@
+import { useState, useEffect } from 'react'
 import { useChatStore } from '@/store/chatStore'
 import { useWebSocket } from '@/hooks/useWebSocket'
 import { useSession } from '@/hooks/useSession'
@@ -7,6 +8,8 @@ import { TerminalStream } from '@/components/Terminal/TerminalStream'
 import { ApprovalCard } from '@/components/Approval/ApprovalCard'
 import { PlanViewer } from '@/components/Approval/PlanViewer'
 import { SessionPanel } from '@/components/Session/SessionPanel'
+import { SessionHistory } from '@/components/Session/SessionHistory'
+import { FileBrowser } from '@/components/FileBrowser/FileBrowser'
 import { uploadFile } from '@/api/http'
 import type { Message } from '@/types/messages'
 
@@ -14,6 +17,14 @@ export default function App() {
   const { sessionId, containerStatus, addMessage, pendingQuestion, setPendingQuestion } = useChatStore()
   const { sendMessage, sendApproval, sendUserResponse, sendCancel } = useWebSocket()
   const { startSession, endSession } = useSession()
+  const [historyOpen, setHistoryOpen] = useState(false)
+  const [fileBrowserOpen, setFileBrowserOpen] = useState(false)
+
+  useEffect(() => {
+    if (!sessionId && containerStatus === 'idle') {
+      startSession()
+    }
+  }, [sessionId, containerStatus, startSession])
 
   const handleSend = (content: string) => {
     const msg: Message = {
@@ -55,11 +66,18 @@ export default function App() {
 
   return (
     <div className="h-screen flex flex-col bg-bg text-white">
-      <SessionPanel onStart={startSession} onEnd={endSession} />
+      <SessionPanel
+        onStart={startSession}
+        onEnd={endSession}
+        onHistoryOpen={() => setHistoryOpen(true)}
+        onFileBrowserToggle={() => setFileBrowserOpen(!fileBrowserOpen)}
+        fileBrowserOpen={fileBrowserOpen}
+      />
 
       <div className="flex-1 flex flex-col overflow-hidden">
         <ChatContainer />
         <TerminalStream />
+        {fileBrowserOpen && <FileBrowser />}
         <ApprovalCard onApprove={handleApprove} onReject={handleReject} />
         <PlanViewer onApprove={handlePlanApprove} onReject={handlePlanReject} />
 
@@ -101,6 +119,8 @@ export default function App() {
           />
         )}
       </div>
+
+      <SessionHistory open={historyOpen} onClose={() => setHistoryOpen(false)} />
     </div>
   )
 }

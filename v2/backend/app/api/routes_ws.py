@@ -1,10 +1,10 @@
 import json
 import asyncio
+import logging
 
-from fastapi import WebSocket, WebSocketDisconnect, Depends
+from fastapi import WebSocket, WebSocketDisconnect
 
-from app.deps import get_session_manager
-from app.core.session_manager import SessionManager
+logger = logging.getLogger(__name__)
 
 
 async def websocket_endpoint(
@@ -22,65 +22,100 @@ async def websocket_endpoint(
     await websocket.accept()
     await sm.touch(session_id)
 
-    try:
-        # Send session status + chat history on connect
-        await websocket.send_json({
-            "type": "session_status",
-            "container_status": "running",
-            "session_id": session_id,
+    send_queue: asyncio.Queue = asyncio.Queue()
+    agent_task: asyncio.Task | None = None
+
+    async def ws_send(msg: dict):
+        await send_queue.put(msg)
+
+    async def sender_loop():
+        try:
+            while True:
+                msg = await send_queue.get()
+                await websocket.send_json(msg)
+        except asyncio.CancelledError:
+            pass
+
+    async def cancel_agent():
+        nonlocal agent_task
+        if agent_task and not agent_task.done():
+            agent_task.cancel()
+            for _ in range(10):
+                if agent_task.done():
+                    break
+                await asyncio.sleep(0.1)
+            agent_task = None
+
+    async def receiver_loop():
+        nonlocal agent_task
+        try:
+            while True:
+                data = await websocket.receive_text()
+                message = json.loads(data)
+                msg_type = message.get("type")
+
+                await sm.touch(session_id)
+
+                if msg_type == "user_message":
+                    logger.info(f"[{session_id[:8]}] user_message: {message['content'][:50]}")
+                    await cancel_agent()
+                    from app.agent.loop import run_agent_loop
+                    agent_task = asyncio.create_task(
+                        run_agent_loop(
+                            session=session,
+                            user_message=message["content"],
+                            ws_send=ws_send,
+                        )
+                    )
+
+                elif msg_type == "approval_response":
+                    from app.agent.loop import handle_approval
+                    await handle_approval(session_id, message)
+
+                elif msg_type == "user_response":
+                    from app.agent.loop import handle_user_response
+                    await handle_user_response(session_id, message["content"])
+
+                elif msg_type == "cancel":
+                    from app.agent.loop import handle_cancel
+                    await handle_cancel(session_id)
+                    await cancel_agent()
+                    await ws_send({"type": "agent_message", "content": "Đã hủy.", "metadata": None})
+
+                elif msg_type == "resource_update":
+                    from app.deps import _docker_manager
+                    if session.container_id:
+                        mem = f"{message['memory_mb']}m"
+                        await _docker_manager.update_resources(
+                            session.container_id,
+                            mem_limit=mem,
+                            cpu_count=message.get("cpu", 1.0),
+                        )
+                        await ws_send({
+                            "type": "session_status",
+                            "container_status": "running",
+                            "resources_updated": True,
+                        })
+        except WebSocketDisconnect:
+            pass
+
+    # Send initial messages
+    await ws_send({
+        "type": "session_status",
+        "container_status": "running",
+        "session_id": session_id,
+    })
+
+    if session.messages:
+        await ws_send({
+            "type": "history_replay",
+            "messages": session.messages[-50:],
         })
 
-        if session.messages:
-            await websocket.send_json({
-                "type": "history_replay",
-                "messages": session.messages[-50:],
-            })
+    sender_task = asyncio.create_task(sender_loop())
 
-        while True:
-            data = await websocket.receive_text()
-            message = json.loads(data)
-            msg_type = message.get("type")
-
-            await sm.touch(session_id)
-
-            if msg_type == "user_message":
-                from app.agent.loop import run_agent_loop
-                await run_agent_loop(
-                    session=session,
-                    user_message=message["content"],
-                    ws_send=websocket.send_json,
-                )
-
-            elif msg_type == "approval_response":
-                from app.agent.loop import handle_approval
-                await handle_approval(session_id, message)
-
-            elif msg_type == "user_response":
-                from app.agent.loop import handle_user_response
-                await handle_user_response(session_id, message["content"])
-
-            elif msg_type == "cancel":
-                from app.agent.loop import handle_cancel
-                await handle_cancel(session_id)
-
-            elif msg_type == "resource_update":
-                from app.core.docker_manager import DockerManager
-                from app.deps import _docker_manager
-                if session.container_id:
-                    mem = f"{message['memory_mb']}m"
-                    await _docker_manager.update_resources(
-                        session.container_id,
-                        mem_limit=mem,
-                        cpu_count=message.get("cpu", 1.0),
-                    )
-                    await websocket.send_json({
-                        "type": "session_status",
-                        "container_status": "running",
-                        "resources_updated": True,
-                    })
-
-    except WebSocketDisconnect:
-        pass
+    try:
+        await receiver_loop()
     except Exception as e:
         try:
             await websocket.send_json({
@@ -90,3 +125,7 @@ async def websocket_endpoint(
             })
         except Exception:
             pass
+    finally:
+        await cancel_agent()
+        sender_task.cancel()
+        await asyncio.gather(sender_task, return_exceptions=True)

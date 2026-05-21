@@ -29,7 +29,7 @@ class BedrockClient:
             aws_access_key_id=settings.aws_access_key_id,
             aws_secret_access_key=settings.aws_secret_access_key,
             region_name=settings.aws_region,
-            config=Config(read_timeout=600, connect_timeout=15),
+            config=Config(read_timeout=60, connect_timeout=10),
         )
 
     async def converse(
@@ -77,7 +77,17 @@ class BedrockClient:
         if not stream:
             return
 
-        for event in stream:
+        def _next_event(it):
+            try:
+                return next(it)
+            except StopIteration:
+                return None
+
+        it = iter(stream)
+        while True:
+            event = await asyncio.to_thread(_next_event, it)
+            if event is None:
+                break
             yield event
 
     async def converse_stream_collect(

@@ -1,10 +1,12 @@
 import { useEffect, useRef } from 'react'
 import { useChatStore } from '@/store/chatStore'
 import { MessageBubble } from './MessageBubble'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import { Bot } from 'lucide-react'
 
 export function ChatContainer() {
-  const { messages, streamingContent, isAgentWorking } = useChatStore()
+  const { messages, streamingContent, isAgentWorking, agentStatus } = useChatStore()
   const bottomRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -12,12 +14,12 @@ export function ChatContainer() {
   }, [messages, streamingContent])
 
   return (
-    <div className="flex-1 overflow-y-auto p-4 space-y-4">
+    <div className="flex-1 overflow-y-auto px-4 py-4 space-y-3">
       {messages.length === 0 && (
         <div className="flex flex-col items-center justify-center h-full text-gray-500">
-          <Bot size={48} className="mb-4 text-primary/50" />
-          <p className="text-lg">SmartAgent V2</p>
-          <p className="text-sm mt-1">Docker sandbox execution — bất kỳ domain nào</p>
+          <Bot size={40} className="mb-3 text-primary/40" />
+          <p className="text-base font-medium text-gray-400">SmartAgent V2</p>
+          <p className="text-xs mt-1 text-gray-600">Docker sandbox — any domain, real execution</p>
         </div>
       )}
 
@@ -27,13 +29,13 @@ export function ChatContainer() {
 
       {streamingContent && (
         <div className="flex gap-3">
-          <div className="w-8 h-8 rounded-full flex items-center justify-center shrink-0 bg-white/10 text-white">
-            <Bot size={16} />
+          <div className="w-7 h-7 rounded-full flex items-center justify-center shrink-0 mt-1 bg-white/10 text-white">
+            <Bot size={14} />
           </div>
-          <div className="max-w-[80%] rounded-xl px-4 py-3 bg-surface border border-white/5">
-            <div className="prose prose-invert prose-sm max-w-none whitespace-pre-wrap">
-              {streamingContent}
-              <span className="animate-pulse">▊</span>
+          <div className="max-w-[85%] rounded-xl px-4 py-3 bg-surface border border-white/5">
+            <div className="prose prose-invert prose-sm max-w-none prose-p:my-1.5 prose-code:text-primary prose-code:bg-white/5 prose-code:px-1 prose-code:rounded prose-code:text-xs">
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>{streamingContent}</ReactMarkdown>
+              <span className="inline-block w-1.5 h-4 bg-primary/60 animate-pulse ml-0.5 -mb-0.5" />
             </div>
           </div>
         </div>
@@ -41,11 +43,20 @@ export function ChatContainer() {
 
       {isAgentWorking && !streamingContent && (
         <div className="flex gap-3">
-          <div className="w-8 h-8 rounded-full flex items-center justify-center shrink-0 bg-white/10">
-            <Bot size={16} className="text-primary animate-pulse" />
+          <div className="w-7 h-7 rounded-full flex items-center justify-center shrink-0 mt-1 bg-white/10">
+            <Bot size={14} className="text-primary animate-pulse" />
           </div>
-          <div className="px-4 py-3 text-gray-500 text-sm">
-            Đang xử lý...
+          <div className="px-4 py-3 text-gray-500 text-sm flex items-center gap-2">
+            <span className="flex gap-1">
+              <span className="w-1.5 h-1.5 rounded-full bg-primary/60 animate-bounce" style={{ animationDelay: '0ms' }} />
+              <span className="w-1.5 h-1.5 rounded-full bg-primary/60 animate-bounce" style={{ animationDelay: '150ms' }} />
+              <span className="w-1.5 h-1.5 rounded-full bg-primary/60 animate-bounce" style={{ animationDelay: '300ms' }} />
+            </span>
+            {agentStatus && (
+              <span className="ml-2 text-xs text-gray-600 font-mono truncate max-w-[300px]">
+                {agentStatus}
+              </span>
+            )}
           </div>
         </div>
       )}

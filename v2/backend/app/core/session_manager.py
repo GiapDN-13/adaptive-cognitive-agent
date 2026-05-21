@@ -3,7 +3,7 @@ from datetime import datetime
 
 from app.config import settings
 from app.core.docker_manager import DockerManager
-from app.core.persistence import load_session_messages, delete_session_messages
+from app.core.persistence import load_session_messages, delete_session_messages, save_session_meta
 from app.models.session import ContainerConfig, Session
 
 
@@ -24,6 +24,13 @@ class SessionManager:
             container_config=container_config,
         )
         self._sessions[session_id] = session
+
+        await save_session_meta(
+            session_id,
+            title="New Session",
+            created_at=session.created_at.isoformat(),
+        )
+
         return session
 
     async def get(self, session_id: str) -> Session | None:

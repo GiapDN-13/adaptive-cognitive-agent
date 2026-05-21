@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { Message, ApprovalRequest, PlanProposal, AgentQuestion, TerminalEntry } from '@/types/messages'
+import type { Message, ApprovalRequest, PlanProposal, PlanStep, AgentQuestion, TerminalEntry } from '@/types/messages'
 
 interface ChatState {
   sessionId: string | null
@@ -9,8 +9,10 @@ interface ChatState {
   terminalEntries: Map<string, string[]>
   pendingApproval: ApprovalRequest | null
   pendingPlan: PlanProposal | null
+  activePlan: PlanProposal | null
   pendingQuestion: AgentQuestion | null
   isAgentWorking: boolean
+  agentStatus: string | null
 
   setSessionId: (id: string | null) => void
   setContainerStatus: (status: ChatState['containerStatus']) => void
@@ -21,8 +23,11 @@ interface ChatState {
   clearTerminal: (execId: string) => void
   setPendingApproval: (req: ApprovalRequest | null) => void
   setPendingPlan: (plan: PlanProposal | null) => void
+  setActivePlan: (plan: PlanProposal | null) => void
+  updateStepStatus: (planId: string, stepId: string, status: PlanStep['status']) => void
   setPendingQuestion: (q: AgentQuestion | null) => void
   setAgentWorking: (working: boolean) => void
+  setAgentStatus: (status: string | null) => void
   reset: () => void
 }
 
@@ -34,8 +39,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
   terminalEntries: new Map(),
   pendingApproval: null,
   pendingPlan: null,
+  activePlan: null,
   pendingQuestion: null,
   isAgentWorking: false,
+  agentStatus: null,
 
   setSessionId: (id) => set({ sessionId: id }),
   setContainerStatus: (status) => set({ containerStatus: status }),
@@ -48,18 +55,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   finalizeStream: () => {
     const { streamingContent } = get()
-    if (streamingContent) {
-      const msg: Message = {
-        id: crypto.randomUUID(),
-        role: 'assistant',
-        content: streamingContent,
-        timestamp: Date.now(),
-      }
-      set((s) => ({
-        messages: [...s.messages, msg],
-        streamingContent: '',
-      }))
+    if (!streamingContent) return
+    const msg: Message = {
+      id: crypto.randomUUID(),
+      role: 'assistant',
+      content: streamingContent,
+      timestamp: Date.now(),
     }
+    set({ messages: [...get().messages, msg], streamingContent: '' })
   },
 
   appendTerminal: (execId, content) => set((s) => {
@@ -77,8 +80,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   setPendingApproval: (req) => set({ pendingApproval: req }),
   setPendingPlan: (plan) => set({ pendingPlan: plan }),
+  setActivePlan: (plan) => set({ activePlan: plan }),
+  updateStepStatus: (planId, stepId, status) => set((s) => {
+    if (!s.activePlan || s.activePlan.planId !== planId) return s
+    const steps = s.activePlan.steps.map((step) =>
+      step.id === stepId ? { ...step, status } : step
+    )
+    return { activePlan: { ...s.activePlan, steps } }
+  }),
   setPendingQuestion: (q) => set({ pendingQuestion: q }),
-  setAgentWorking: (working) => set({ isAgentWorking: working }),
+  setAgentWorking: (working) => set({ isAgentWorking: working, ...(working ? {} : { agentStatus: null }) }),
+  setAgentStatus: (status) => set({ agentStatus: status }),
 
   reset: () => set({
     sessionId: null,
@@ -88,7 +100,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
     terminalEntries: new Map(),
     pendingApproval: null,
     pendingPlan: null,
+    activePlan: null,
     pendingQuestion: null,
     isAgentWorking: false,
+    agentStatus: null,
   }),
 }))

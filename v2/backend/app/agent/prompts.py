@@ -47,7 +47,19 @@ PLAN_GENERATION_PROMPT = """Based on the user's request, generate a multi-step e
 
 Each step should have:
 - description: What this step accomplishes (in Vietnamese)
-- command: The shell command to run (or null if it's a reasoning/check step)
+- command: The ACTUAL BASH COMMAND to run in the container (or null if it's a reasoning/check step)
+
+IMPORTANT: The "command" field must be a real bash command executable in the container.
+- To create files: use printf, cat with heredoc, or echo
+- To install packages: use pip install, apt-get install
+- To run scripts: use python, bash, etc.
+- NEVER use tool names like "write_file" or "read_file" as commands.
+
+Examples of valid commands:
+- printf '%s' 'print(\"hello\")' > main.py
+- pip install -r requirements.txt
+- python main.py
+- cat <<'EOF' > config.json\n{"key": "value"}\nEOF
 
 Return as JSON: {"title": "...", "steps": [{"description": "...", "command": "..."}]}
 

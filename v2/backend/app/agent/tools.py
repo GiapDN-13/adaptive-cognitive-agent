@@ -106,7 +106,7 @@ TOOL_DEFINITIONS = [
     {
         "toolSpec": {
             "name": "propose_plan",
-            "description": "Present a multi-step execution plan for the user to approve before executing.",
+            "description": "Present a multi-step execution plan for the user to approve before executing. Each step's 'command' field MUST be an actual bash command (e.g. 'python main.py', 'pip install x', 'printf ... > file.py'). Never use tool names as commands.",
             "inputSchema": {
                 "json": {
                     "type": "object",

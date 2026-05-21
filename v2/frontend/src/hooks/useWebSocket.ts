@@ -5,7 +5,7 @@ import type { ServerMessage } from '@/types/messages'
 
 export function useWebSocket() {
   const wsRef = useRef<WebSocketManager | null>(null)
-  const { sessionId, setContainerStatus, appendStreamChunk, finalizeStream, appendTerminal, setPendingApproval, setPendingPlan, setPendingQuestion, addMessage, setAgentWorking } = useChatStore()
+  const { sessionId, setContainerStatus, appendStreamChunk, finalizeStream, appendTerminal, setPendingApproval, setPendingPlan, setActivePlan, updateStepStatus, setPendingQuestion, addMessage, setAgentWorking } = useChatStore()
 
   const handleMessage = useCallback((msg: ServerMessage) => {
     switch (msg.type) {
@@ -18,27 +18,37 @@ export function useWebSocket() {
         }
         break
 
-      case 'agent_message':
-        if (useChatStore.getState().streamingContent) {
-          // Text was already streamed via chunks, just finalize
+      case 'agent_message': {
+        const state = useChatStore.getState()
+        if (state.streamingContent) {
           finalizeStream()
         } else {
-          // Non-streamed response (e.g. after tool_use)
-          addMessage({
-            id: crypto.randomUUID(),
-            role: 'assistant',
-            content: msg.content,
-            timestamp: Date.now(),
-            metadata: msg.metadata,
-          })
+          const lastMsg = state.messages[state.messages.length - 1]
+          const isDuplicate = lastMsg?.role === 'assistant' && lastMsg.content === msg.content
+          if (!isDuplicate) {
+            addMessage({
+              id: crypto.randomUUID(),
+              role: 'assistant',
+              content: msg.content,
+              timestamp: Date.now(),
+              metadata: msg.metadata,
+            })
+          }
+        }
+        if (state.activePlan) {
+          setActivePlan(null)
         }
         setAgentWorking(false)
         break
+      }
 
       case 'terminal_output':
         if (!msg.done) {
           appendTerminal(msg.exec_id, msg.content)
         }
+        break
+
+      case 'file_ready' as any:
         break
 
       case 'approval_request':
@@ -55,8 +65,12 @@ export function useWebSocket() {
         setPendingPlan({
           planId: msg.plan_id,
           title: msg.title,
-          steps: msg.steps,
+          steps: msg.steps.map((s) => ({ ...s, status: 'pending' as const })),
         })
+        break
+
+      case 'step_progress':
+        updateStepStatus(msg.plan_id, msg.step_id, msg.status as any)
         break
 
       case 'agent_question':
@@ -68,6 +82,7 @@ export function useWebSocket() {
 
       case 'session_status':
         setContainerStatus(msg.container_status === 'running' ? 'running' : 'stopped')
+        setAgentWorking(false)
         break
 
       case 'history_replay' as any:
@@ -81,6 +96,14 @@ export function useWebSocket() {
         }
         break
 
+      case 'agent_status' as any: {
+        const { setAgentStatus } = useChatStore.getState()
+        const detail = (msg as any).detail || (msg as any).tool || ''
+        const tool = (msg as any).tool || ''
+        setAgentStatus(tool ? `${tool}: ${detail}` : detail)
+        break
+      }
+
       case 'error':
         addMessage({
           id: crypto.randomUUID(),
@@ -91,12 +114,15 @@ export function useWebSocket() {
         setAgentWorking(false)
         break
     }
-  }, [finalizeStream, appendStreamChunk, appendTerminal, setPendingApproval, setPendingPlan, setPendingQuestion, addMessage, setAgentWorking, setContainerStatus])
+  }, [finalizeStream, appendStreamChunk, appendTerminal, setPendingApproval, setPendingPlan, setActivePlan, updateStepStatus, setPendingQuestion, addMessage, setAgentWorking, setContainerStatus])
 
   useEffect(() => {
     if (!sessionId) return
 
     const ws = new WebSocketManager(sessionId, handleMessage)
+    ws.onSessionLost = () => {
+      useChatStore.getState().reset()
+    }
     ws.connect()
     wsRef.current = ws
 
@@ -114,7 +140,14 @@ export function useWebSocket() {
   const sendApproval = useCallback((requestId: string, approved: boolean) => {
     wsRef.current?.sendApproval(requestId, approved)
     setPendingApproval(null)
-  }, [setPendingApproval])
+    const plan = useChatStore.getState().pendingPlan
+    if (plan && plan.planId === requestId && approved) {
+      setActivePlan(plan)
+      setPendingPlan(null)
+    } else if (plan && plan.planId === requestId) {
+      setPendingPlan(null)
+    }
+  }, [setPendingApproval, setActivePlan, setPendingPlan])
 
   const sendUserResponse = useCallback((content: string) => {
     wsRef.current?.sendUserResponse(content)

@@ -9,6 +9,7 @@ export class WebSocketManager {
   private reconnectAttempts = 0
   private maxReconnects = 5
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null
+  onSessionLost: (() => void) | null = null
 
   constructor(sessionId: string, handler: MessageHandler) {
     this.sessionId = sessionId
@@ -34,6 +35,10 @@ export class WebSocketManager {
     }
 
     this.ws.onclose = (event) => {
+      if (event.code === 4004) {
+        if (this.onSessionLost) this.onSessionLost()
+        return
+      }
       if (event.code !== 1000 && this.reconnectAttempts < this.maxReconnects) {
         this.reconnectAttempts++
         const delay = Math.min(1000 * 2 ** this.reconnectAttempts, 30000)

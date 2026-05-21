@@ -39,3 +39,38 @@ export async function getSessionStats(sessionId: string): Promise<{
   if (!res.ok) return { status: 'unknown', running: false, cpu_percent: 0, memory_mb: 0 }
   return res.json()
 }
+
+export interface SessionHistoryItem {
+  id: string
+  title: string
+  created_at: string
+  updated_at: string
+}
+
+export async function getSessionHistory(): Promise<SessionHistoryItem[]> {
+  const res = await fetch(`${BASE_URL}/history`)
+  if (!res.ok) return []
+  const data = await res.json()
+  return data.sessions || []
+}
+
+export async function getHistoryMessages(sessionId: string): Promise<{ role: string; content: string }[]> {
+  const res = await fetch(`${BASE_URL}/history/${sessionId}/messages`)
+  if (!res.ok) return []
+  const data = await res.json()
+  return data.messages || []
+}
+
+export interface FileEntry {
+  name: string
+  type: 'file' | 'directory'
+  size: number | null
+  path: string
+}
+
+export async function getFileTree(sessionId: string, path: string = '/workspace'): Promise<FileEntry[]> {
+  const res = await fetch(`${BASE_URL}/sessions/${sessionId}/tree?path=${encodeURIComponent(path)}`)
+  if (!res.ok) return []
+  const data = await res.json()
+  return data.entries || []
+}

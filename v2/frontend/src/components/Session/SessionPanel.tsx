@@ -1,14 +1,17 @@
 import { useState, useEffect } from 'react'
-import { Play, Square, Loader2, Cpu, HardDrive } from 'lucide-react'
+import { Play, Square, Loader2, Cpu, HardDrive, History, FolderOpen } from 'lucide-react'
 import { useChatStore } from '@/store/chatStore'
 import { getSessionStats } from '@/api/http'
 
 interface Props {
   onStart: () => void
   onEnd: () => void
+  onHistoryOpen: () => void
+  onFileBrowserToggle: () => void
+  fileBrowserOpen: boolean
 }
 
-export function SessionPanel({ onStart, onEnd }: Props) {
+export function SessionPanel({ onStart, onEnd, onHistoryOpen, onFileBrowserToggle, fileBrowserOpen }: Props) {
   const { containerStatus, sessionId } = useChatStore()
   const [stats, setStats] = useState({ cpu_percent: 0, memory_mb: 0 })
 
@@ -23,6 +26,14 @@ export function SessionPanel({ onStart, onEnd }: Props) {
 
   return (
     <div className="flex items-center gap-3 px-4 py-2 border-b border-white/10 bg-surface/50">
+      <button
+        onClick={onHistoryOpen}
+        className="p-1.5 hover:bg-white/10 rounded transition"
+        title="Session History"
+      >
+        <History size={14} className="text-gray-400" />
+      </button>
+
       <div className="flex items-center gap-2">
         <div className={`w-2 h-2 rounded-full ${
           containerStatus === 'running' ? 'bg-green-400' :
@@ -47,7 +58,17 @@ export function SessionPanel({ onStart, onEnd }: Props) {
         </div>
       )}
 
-      <div className="ml-auto">
+      <div className="ml-auto flex items-center gap-2">
+        {containerStatus === 'running' && (
+          <button
+            onClick={onFileBrowserToggle}
+            className={`p-1.5 rounded transition ${fileBrowserOpen ? 'bg-primary/20 text-primary' : 'hover:bg-white/10 text-gray-400'}`}
+            title="File Browser"
+          >
+            <FolderOpen size={14} />
+          </button>
+        )}
+
         {containerStatus === 'idle' && (
           <button
             onClick={onStart}
