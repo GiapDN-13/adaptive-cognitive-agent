@@ -9,7 +9,13 @@ export class WebSocketManager {
   private reconnectAttempts = 0
   private maxReconnects = 5
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null
+  private intentionalClose = false
+  private pendingMessages: Record<string, unknown>[] = []
+
   onSessionLost: (() => void) | null = null
+  onConnectionError: ((reason: string) => void) | null = null
+  onReconnecting: ((attempt: number, maxAttempts: number) => void) | null = null
+  onReconnectFailed: (() => void) | null = null
 
   constructor(sessionId: string, handler: MessageHandler) {
     this.sessionId = sessionId
@@ -23,35 +29,69 @@ export class WebSocketManager {
 
     this.ws.onopen = () => {
       this.reconnectAttempts = 0
+      this.intentionalClose = false
+      for (const msg of this.pendingMessages) {
+        this.ws!.send(JSON.stringify(msg))
+      }
+      this.pendingMessages = []
     }
 
     this.ws.onmessage = (event) => {
       try {
-        const msg = JSON.parse(event.data) as ServerMessage
-        this.handler(msg)
+        const msg = JSON.parse(event.data)
+        if (msg.type === 'ping') return
+        this.handler(msg as ServerMessage)
       } catch (e) {
         console.error('Failed to parse WS message:', e)
       }
     }
 
     this.ws.onclose = (event) => {
-      if (event.code === 4004) {
-        if (this.onSessionLost) this.onSessionLost()
+      const { code } = event
+
+      if (code === 4004) {
+        this.cleanup()
+        this.onSessionLost?.()
         return
       }
-      if (event.code !== 1000 && this.reconnectAttempts < this.maxReconnects) {
+
+      if (code === 1000) {
+        this.cleanup()
+        return
+      }
+
+      // Abnormal closure — attempt reconnect
+      if (!this.intentionalClose && this.reconnectAttempts < this.maxReconnects) {
         this.reconnectAttempts++
-        const delay = Math.min(1000 * 2 ** this.reconnectAttempts, 30000)
+        this.onReconnecting?.(this.reconnectAttempts, this.maxReconnects)
+        const delay = Math.min(1000 * 2 ** this.reconnectAttempts, 15000)
         this.reconnectTimer = setTimeout(() => this.connect(), delay)
+      } else if (!this.intentionalClose) {
+        this.onReconnectFailed?.()
       }
     }
 
-    this.ws.onerror = () => {}
+    this.ws.onerror = () => {
+      this.onConnectionError?.('WebSocket error')
+    }
+  }
+
+  private cleanup() {
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer)
+      this.reconnectTimer = null
+    }
+    this.reconnectAttempts = 0
+    this.pendingMessages = []
   }
 
   send(data: Record<string, unknown>) {
     if (this.ws?.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify(data))
+    } else if (this.ws?.readyState === WebSocket.CONNECTING) {
+      this.pendingMessages.push(data)
+    } else {
+      this.onConnectionError?.('Cannot send: not connected')
     }
   }
 
@@ -72,7 +112,8 @@ export class WebSocketManager {
   }
 
   disconnect() {
-    if (this.reconnectTimer) clearTimeout(this.reconnectTimer)
+    this.intentionalClose = true
+    this.cleanup()
     this.ws?.close(1000)
     this.ws = null
   }

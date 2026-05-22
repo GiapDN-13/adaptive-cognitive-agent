@@ -13,6 +13,8 @@ interface ChatState {
   pendingQuestion: AgentQuestion | null
   isAgentWorking: boolean
   agentStatus: string | null
+  connectionStatus: 'connected' | 'reconnecting' | 'disconnected' | 'error'
+  connectionDetail: string | null
 
   setSessionId: (id: string | null) => void
   setContainerStatus: (status: ChatState['containerStatus']) => void
@@ -28,6 +30,7 @@ interface ChatState {
   setPendingQuestion: (q: AgentQuestion | null) => void
   setAgentWorking: (working: boolean) => void
   setAgentStatus: (status: string | null) => void
+  setConnectionStatus: (status: ChatState['connectionStatus'], detail?: string | null) => void
   reset: () => void
 }
 
@@ -43,6 +46,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
   pendingQuestion: null,
   isAgentWorking: false,
   agentStatus: null,
+  connectionStatus: 'connected',
+  connectionDetail: null,
 
   setSessionId: (id) => set({ sessionId: id }),
   setContainerStatus: (status) => set({ containerStatus: status }),
@@ -91,6 +96,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   setPendingQuestion: (q) => set({ pendingQuestion: q }),
   setAgentWorking: (working) => set({ isAgentWorking: working, ...(working ? {} : { agentStatus: null }) }),
   setAgentStatus: (status) => set({ agentStatus: status }),
+  setConnectionStatus: (status, detail = null) => set({ connectionStatus: status, connectionDetail: detail }),
 
   reset: () => set({
     sessionId: null,
@@ -104,5 +110,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     pendingQuestion: null,
     isAgentWorking: false,
     agentStatus: null,
+    connectionStatus: 'connected',
+    connectionDetail: null,
   }),
 }))

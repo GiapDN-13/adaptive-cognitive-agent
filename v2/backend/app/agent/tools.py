@@ -163,12 +163,22 @@ def requires_approval(command: str) -> bool:
     return False
 
 
-def truncate_output(output: str, max_lines: int = 100) -> tuple[str, bool]:
-    lines = output.split("\n")
-    if len(lines) <= max_lines:
-        return output, False
+def truncate_output(output: str, max_lines: int = 150, max_chars: int = 12000) -> tuple[str, bool]:
+    if len(output) <= max_chars:
+        lines = output.split("\n")
+        if len(lines) <= max_lines:
+            return output, False
 
-    head = "\n".join(lines[:50])
-    tail = "\n".join(lines[-20:])
-    truncated = f"{head}\n\n... [{len(lines) - 70} lines hidden] ...\n\n{tail}"
-    return truncated, True
+    lines = output.split("\n")
+    if len(lines) > max_lines:
+        head = "\n".join(lines[:80])
+        tail = "\n".join(lines[-30:])
+        truncated = f"{head}\n\n... [{len(lines) - 110} lines hidden] ...\n\n{tail}"
+    else:
+        truncated = output
+
+    if len(truncated) > max_chars:
+        truncated = truncated[:max_chars] + f"\n... [truncated at {max_chars} chars, total {len(output)} chars]"
+        return truncated, True
+
+    return truncated, len(lines) > max_lines

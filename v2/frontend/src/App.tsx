@@ -59,10 +59,22 @@ export default function App() {
     }
   }
 
-  const handleApprove = (requestId: string) => sendApproval(requestId, true)
-  const handleReject = (requestId: string) => sendApproval(requestId, false)
-  const handlePlanApprove = (planId: string) => sendApproval(planId, true)
-  const handlePlanReject = (planId: string) => sendApproval(planId, false)
+  const handleApprove = (requestId: string) => {
+    sendApproval(requestId, true)
+    useChatStore.getState().setPendingApproval(null)
+  }
+  const handleReject = (requestId: string) => {
+    sendApproval(requestId, false)
+    useChatStore.getState().setPendingApproval(null)
+  }
+  const handlePlanApprove = (planId: string) => {
+    sendApproval(planId, true)
+    useChatStore.getState().setPendingPlan(null)
+  }
+  const handlePlanReject = (planId: string) => {
+    sendApproval(planId, false)
+    useChatStore.getState().setPendingPlan(null)
+  }
 
   return (
     <div className="h-screen flex flex-col bg-bg text-white">

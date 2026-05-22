@@ -1,5 +1,6 @@
 import asyncio
 import json
+import threading
 from dataclasses import dataclass
 from typing import AsyncGenerator
 
@@ -29,7 +30,7 @@ class BedrockClient:
             aws_access_key_id=settings.aws_access_key_id,
             aws_secret_access_key=settings.aws_secret_access_key,
             region_name=settings.aws_region,
-            config=Config(read_timeout=60, connect_timeout=10),
+            config=Config(read_timeout=120, connect_timeout=10),
         )
 
     async def converse(
@@ -38,7 +39,7 @@ class BedrockClient:
         system: str,
         tools: list[dict] | None = None,
         temperature: float = 0.4,
-        max_tokens: int = 32000,
+        max_tokens: int = 64000,
     ) -> dict:
         kwargs = {
             "modelId": settings.bedrock_light_model,
@@ -58,7 +59,8 @@ class BedrockClient:
         system: str,
         tools: list[dict] | None = None,
         temperature: float = 0.4,
-        max_tokens: int = 32000,
+        max_tokens: int = 64000,
+        cancel_event: threading.Event | None = None,
     ) -> AsyncGenerator[dict, None]:
         kwargs = {
             "modelId": settings.bedrock_light_model,
@@ -72,7 +74,10 @@ class BedrockClient:
         def _call():
             return self._client.converse_stream(**kwargs)
 
-        response = await asyncio.to_thread(_call)
+        response = await asyncio.wait_for(
+            asyncio.to_thread(_call),
+            timeout=180.0,
+        )
         stream = response.get("stream")
         if not stream:
             return
@@ -85,7 +90,15 @@ class BedrockClient:
 
         it = iter(stream)
         while True:
-            event = await asyncio.to_thread(_next_event, it)
+            if cancel_event and cancel_event.is_set():
+                break
+            try:
+                event = await asyncio.wait_for(
+                    asyncio.to_thread(_next_event, it),
+                    timeout=60.0,
+                )
+            except asyncio.TimeoutError:
+                raise RuntimeError("LLM stream stalled: no data for 60s")
             if event is None:
                 break
             yield event
@@ -96,10 +109,10 @@ class BedrockClient:
         system: str,
         tools: list[dict] | None = None,
         temperature: float = 0.4,
-        max_tokens: int = 32000,
+        max_tokens: int = 64000,
         on_text_chunk: callable = None,
+        cancel_event: threading.Event | None = None,
     ) -> dict:
-        """Stream response, collect into full response structure, optionally callback on text chunks."""
         content_blocks = []
         current_text = ""
         current_tool_use = None
@@ -113,6 +126,7 @@ class BedrockClient:
             tools=tools,
             temperature=temperature,
             max_tokens=max_tokens,
+            cancel_event=cancel_event,
         ):
             if "contentBlockStart" in event:
                 start = event["contentBlockStart"].get("start", {})

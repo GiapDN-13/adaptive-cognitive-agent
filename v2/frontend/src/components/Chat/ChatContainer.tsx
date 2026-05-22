@@ -3,7 +3,30 @@ import { useChatStore } from '@/store/chatStore'
 import { MessageBubble } from './MessageBubble'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { Bot } from 'lucide-react'
+import { Bot, WifiOff, RefreshCw, AlertTriangle } from 'lucide-react'
+
+function ConnectionBanner() {
+  const { connectionStatus, connectionDetail } = useChatStore()
+
+  if (connectionStatus === 'connected') return null
+
+  const config = {
+    reconnecting: { bg: 'bg-yellow-900/80', icon: RefreshCw, text: 'Reconnecting...', iconClass: 'animate-spin' },
+    disconnected: { bg: 'bg-red-900/80', icon: WifiOff, text: 'Disconnected', iconClass: '' },
+    error: { bg: 'bg-red-900/80', icon: AlertTriangle, text: 'Connection error', iconClass: '' },
+  }[connectionStatus]
+
+  if (!config) return null
+  const Icon = config.icon
+
+  return (
+    <div className={`sticky top-0 z-10 ${config.bg} border-b border-white/10 px-4 py-2 flex items-center gap-2 text-sm text-white/90`}>
+      <Icon size={14} className={config.iconClass} />
+      <span>{config.text}</span>
+      {connectionDetail && <span className="text-xs text-white/60 ml-1">({connectionDetail})</span>}
+    </div>
+  )
+}
 
 export function ChatContainer() {
   const { messages, streamingContent, isAgentWorking, agentStatus } = useChatStore()
@@ -15,6 +38,7 @@ export function ChatContainer() {
 
   return (
     <div className="flex-1 overflow-y-auto px-4 py-4 space-y-3">
+      <ConnectionBanner />
       {messages.length === 0 && (
         <div className="flex flex-col items-center justify-center h-full text-gray-500">
           <Bot size={40} className="mb-3 text-primary/40" />

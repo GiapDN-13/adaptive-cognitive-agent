@@ -36,14 +36,24 @@ async def websocket_endpoint(
         except asyncio.CancelledError:
             pass
 
+    async def ping_loop():
+        try:
+            while True:
+                await asyncio.sleep(15)
+                await send_queue.put({"type": "ping"})
+        except asyncio.CancelledError:
+            pass
+
     async def cancel_agent():
         nonlocal agent_task
         if agent_task and not agent_task.done():
+            from app.agent.loop import handle_cancel
+            await handle_cancel(session_id)
             agent_task.cancel()
-            for _ in range(10):
-                if agent_task.done():
-                    break
-                await asyncio.sleep(0.1)
+            try:
+                await asyncio.wait_for(asyncio.shield(agent_task), timeout=2.0)
+            except (asyncio.TimeoutError, asyncio.CancelledError, Exception):
+                pass
             agent_task = None
 
     async def receiver_loop():
@@ -77,8 +87,6 @@ async def websocket_endpoint(
                     await handle_user_response(session_id, message["content"])
 
                 elif msg_type == "cancel":
-                    from app.agent.loop import handle_cancel
-                    await handle_cancel(session_id)
                     await cancel_agent()
                     await ws_send({"type": "agent_message", "content": "Đã hủy.", "metadata": None})
 
@@ -99,7 +107,7 @@ async def websocket_endpoint(
         except WebSocketDisconnect:
             pass
 
-    # Send initial messages
+    # Send initial status
     await ws_send({
         "type": "session_status",
         "container_status": "running",
@@ -113,6 +121,7 @@ async def websocket_endpoint(
         })
 
     sender_task = asyncio.create_task(sender_loop())
+    ping_task = asyncio.create_task(ping_loop())
 
     try:
         await receiver_loop()
@@ -127,5 +136,6 @@ async def websocket_endpoint(
             pass
     finally:
         await cancel_agent()
+        ping_task.cancel()
         sender_task.cancel()
-        await asyncio.gather(sender_task, return_exceptions=True)
+        await asyncio.gather(sender_task, ping_task, return_exceptions=True)

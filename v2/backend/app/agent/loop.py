@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import threading
 import uuid
 from typing import Callable
 
@@ -19,7 +20,7 @@ from app.llm.streaming import stream_agent_response
 from app.core.persistence import save_session_messages, update_session_title
 from app.deps import _docker_manager
 
-MAX_ITERATIONS = 10
+MAX_ITERATIONS = 25
 _llm_client: BedrockClient | None = None
 
 
@@ -37,6 +38,7 @@ _response_results: dict[str, str] = {}
 _cancel_flags: dict[str, bool] = {}
 _session_pending_ids: dict[str, list[str]] = {}
 _session_generation: dict[str, int] = {}
+_cancel_events: dict[str, threading.Event] = {}
 
 
 async def run_agent_loop(
@@ -47,6 +49,8 @@ async def run_agent_loop(
     _cancel_flags[session.id] = False
     gen = _session_generation.get(session.id, 0) + 1
     _session_generation[session.id] = gen
+    cancel_event = threading.Event()
+    _cancel_events[session.id] = cancel_event
     logger.info(f"[{session.id[:8]}] agent loop start, gen={gen}, msg={user_message[:50]}")
 
     session.messages.append({"role": "user", "content": user_message})
@@ -59,7 +63,7 @@ async def run_agent_loop(
     messages = _build_messages(session)
 
     try:
-        await _run_loop(session, messages, ws_send, gen)
+        await _run_loop(session, messages, ws_send, gen, cancel_event)
     except asyncio.CancelledError:
         logger.info(f"[{session.id[:8]}] agent loop cancelled, gen={gen}")
     except Exception as e:
@@ -77,28 +81,27 @@ async def _run_loop(
     messages: list[dict],
     ws_send: Callable,
     gen: int = 0,
+    cancel_event: threading.Event | None = None,
 ):
 
     def _stale():
         return _session_generation.get(session.id) != gen
 
     search_count = 0
-    max_searches = 3
+    max_searches = 10
 
+    responded = False
     for iteration in range(MAX_ITERATIONS):
         if _cancel_flags.get(session.id) or _stale():
             break
 
         await ws_send({"type": "agent_status", "tool": "thinking", "detail": f"iteration {iteration + 1}"})
-        response = await _call_llm(messages, ws_send=ws_send)
+        stop_reason, content_blocks, messages = await _call_llm_with_continuation(
+            messages, ws_send, cancel_event, session.id
+        )
 
         if _stale():
             break
-
-        stop_reason = response.get("stopReason", "")
-        content_blocks = response.get("output", {}).get("message", {}).get("content", [])
-
-        messages.append({"role": "assistant", "content": content_blocks})
 
         if stop_reason == "end_turn":
             text = _extract_text(content_blocks)
@@ -106,6 +109,7 @@ async def _run_loop(
                 session.messages.append({"role": "assistant", "content": text})
                 await save_session_messages(session.id, session.messages)
                 await ws_send({"type": "agent_message", "content": text, "metadata": {"iterations": iteration + 1, "streamed": True}})
+            responded = True
             break
 
         if stop_reason == "tool_use":
@@ -146,6 +150,8 @@ async def _run_loop(
                     }
                 })
 
+            if iteration >= MAX_ITERATIONS - 3:
+                tool_results.append({"text": "[SYSTEM: You are running low on iterations. Wrap up your research and provide a comprehensive response in the next turn.]"})
             messages.append({"role": "user", "content": tool_results})
 
         else:
@@ -153,7 +159,27 @@ async def _run_loop(
             if text:
                 session.messages.append({"role": "assistant", "content": text})
                 await ws_send({"type": "agent_message", "content": text, "metadata": None})
+            responded = True
             break
+
+    if not responded and not _stale() and not _cancel_flags.get(session.id):
+        logger.info(f"[{session.id[:8]}] loop exhausted, running final synthesis")
+        messages = _trim_messages_for_synthesis(messages)
+        messages.append({"role": "user", "content": [{"text": "You have reached the iteration limit. Synthesize all your findings and provide a comprehensive response now. Do not use any more tools."}]})
+        await ws_send({"type": "agent_status", "tool": "thinking", "detail": "final synthesis"})
+        try:
+            stop_reason, content_blocks, messages = await _call_llm_with_continuation(
+                messages, ws_send, cancel_event, session.id
+            )
+            if not _stale():
+                text = _extract_text(content_blocks)
+                if text:
+                    session.messages.append({"role": "assistant", "content": text})
+                    await save_session_messages(session.id, session.messages)
+                    await ws_send({"type": "agent_message", "content": text, "metadata": {"iterations": MAX_ITERATIONS + 1, "streamed": True}})
+        except Exception as e:
+            logger.error(f"[{session.id[:8]}] final synthesis failed: {e}")
+            await ws_send({"type": "agent_message", "content": f"Đã nghiên cứu qua {MAX_ITERATIONS} bước nhưng không thể tổng hợp kết quả do timeout. Vui lòng thử lại với câu hỏi cụ thể hơn.", "metadata": None})
 
 
 async def _execute_tool(
@@ -289,6 +315,31 @@ async def _execute_tool(
     return f"Unknown tool: {tool_name}"
 
 
+def _trim_messages_for_synthesis(messages: list[dict]) -> list[dict]:
+    """Trim tool results to keep context manageable for final synthesis."""
+    trimmed = []
+    for msg in messages:
+        content = msg.get("content", [])
+        if msg.get("role") == "user" and isinstance(content, list):
+            new_content = []
+            for block in content:
+                if "toolResult" in block:
+                    result_content = block["toolResult"].get("content", [])
+                    truncated_content = []
+                    for item in result_content:
+                        if "text" in item and len(item["text"]) > 4000:
+                            truncated_content.append({"text": item["text"][:4000] + "\n... [truncated for synthesis]"})
+                        else:
+                            truncated_content.append(item)
+                    new_content.append({"toolResult": {**block["toolResult"], "content": truncated_content}})
+                else:
+                    new_content.append(block)
+            trimmed.append({"role": "user", "content": new_content})
+        else:
+            trimmed.append(msg)
+    return trimmed
+
+
 def _build_messages(session: Session) -> list[dict]:
     messages = []
     for msg in session.messages[-20:]:
@@ -309,8 +360,97 @@ def _extract_text(content_blocks: list) -> str:
     return text
 
 
-async def _call_llm(messages: list[dict], ws_send: Callable = None) -> dict:
+async def _call_llm_with_continuation(
+    messages: list[dict],
+    ws_send: Callable,
+    cancel_event: threading.Event | None,
+    session_id: str,
+) -> tuple[str, list, list[dict]]:
+    """Call LLM with automatic max_tokens continuation. Returns (stop_reason, final_content_blocks, updated_messages)."""
+    all_text_parts = []
+    max_continuations = 5
+
+    for cont in range(max_continuations):
+        if _cancel_flags.get(session_id):
+            break
+
+        try:
+            response = await _call_llm(messages, ws_send=ws_send, cancel_event=cancel_event)
+        except Exception as e:
+            logger.error(f"[{session_id[:8]}] LLM error during continuation {cont}: {e}")
+            if all_text_parts:
+                combined = "".join(all_text_parts)
+                return "end_turn", [{"text": combined}], messages
+            raise
+
+        stop_reason = response.get("stopReason", "")
+        content_blocks = response.get("output", {}).get("message", {}).get("content", [])
+        messages.append({"role": "assistant", "content": content_blocks})
+
+        if stop_reason != "max_tokens":
+            if all_text_parts:
+                text = _extract_text(content_blocks)
+                all_text_parts.append(text)
+                combined = "".join(all_text_parts)
+                content_blocks = [{"text": combined}]
+            return stop_reason, content_blocks, messages
+
+        text = _extract_text(content_blocks)
+        all_text_parts.append(text)
+        await ws_send({"type": "agent_status", "tool": "thinking", "detail": f"continuing response ({cont + 1})..."})
+        messages.append({"role": "user", "content": [{"text": "Continue from where you left off. Do not repeat what you already wrote."}]})
+
+    combined = "".join(all_text_parts)
+    return "end_turn", [{"text": combined}], messages
+
+
+def _apply_context_window(messages: list[dict], max_chars: int = 180000) -> list[dict]:
+    """Trim old tool results if context exceeds limit. Keep first message (user prompt) and recent messages intact."""
+    total = sum(len(str(m.get("content", ""))) for m in messages)
+    if total <= max_chars:
+        return messages
+
+    logger.info(f"Context too large ({total} chars), applying windowing (max {max_chars})")
+    result = []
+    # Always keep first user message
+    if messages:
+        result.append(messages[0])
+
+    # For middle messages, progressively trim tool results
+    for msg in messages[1:-6]:
+        content = msg.get("content", [])
+        if msg.get("role") == "user" and isinstance(content, list):
+            new_content = []
+            for block in content:
+                if "toolResult" in block:
+                    rc = block["toolResult"].get("content", [])
+                    trimmed_rc = []
+                    for item in rc:
+                        if "text" in item and len(item["text"]) > 2000:
+                            trimmed_rc.append({"text": item["text"][:2000] + "\n...[trimmed]"})
+                        else:
+                            trimmed_rc.append(item)
+                    new_content.append({"toolResult": {**block["toolResult"], "content": trimmed_rc}})
+                else:
+                    new_content.append(block)
+            result.append({"role": "user", "content": new_content})
+        else:
+            result.append(msg)
+
+    # Keep last 6 messages intact (recent context)
+    result.extend(messages[-6:])
+    new_total = sum(len(str(m.get("content", ""))) for m in result)
+    logger.info(f"Context windowed: {total} -> {new_total} chars")
+    return result
+
+
+async def _call_llm(messages: list[dict], ws_send: Callable = None, cancel_event: threading.Event | None = None) -> dict:
     client = _get_llm()
+    messages = _apply_context_window(messages)
+    msg_count = len(messages)
+    total_chars = sum(len(str(m.get("content", ""))) for m in messages)
+    timeout = max(180, min(600, total_chars // 100))
+    logger.info(f"_call_llm: {msg_count} messages, ~{total_chars} chars, timeout={timeout}s")
     try:
         if ws_send:
             return await asyncio.wait_for(
@@ -320,8 +460,9 @@ async def _call_llm(messages: list[dict], ws_send: Callable = None) -> dict:
                     system=SYSTEM_PROMPT,
                     tools=TOOL_DEFINITIONS,
                     ws_send=ws_send,
+                    cancel_event=cancel_event,
                 ),
-                timeout=120,
+                timeout=timeout,
             )
         return await asyncio.wait_for(
             client.converse(
@@ -329,15 +470,16 @@ async def _call_llm(messages: list[dict], ws_send: Callable = None) -> dict:
                 system=SYSTEM_PROMPT,
                 tools=TOOL_DEFINITIONS,
             ),
-            timeout=120,
+            timeout=timeout,
         )
     except asyncio.CancelledError:
         raise
     except asyncio.TimeoutError:
-        raise RuntimeError("LLM response timeout (120s)")
+        logger.error(f"_call_llm TIMEOUT ({timeout}s): {msg_count} msgs, {total_chars} chars")
+        raise RuntimeError(f"LLM response timeout ({timeout}s)")
 
 
-async def _wait_for_approval(request_id: str, timeout: int = 300) -> dict:
+async def _wait_for_approval(request_id: str, timeout: int = 600) -> dict:
     event = asyncio.Event()
     _pending_approvals[request_id] = event
     try:
@@ -349,7 +491,7 @@ async def _wait_for_approval(request_id: str, timeout: int = 300) -> dict:
         _pending_approvals.pop(request_id, None)
 
 
-async def _wait_for_user_response(session_id: str, timeout: int = 300) -> str:
+async def _wait_for_user_response(session_id: str, timeout: int = 120) -> str:
     event = asyncio.Event()
     _pending_responses[session_id] = event
     try:
@@ -379,6 +521,9 @@ async def handle_user_response(session_id: str, content: str):
 async def handle_cancel(session_id: str):
     _cancel_flags[session_id] = True
     _session_generation[session_id] = _session_generation.get(session_id, 0) + 1
+    cancel_event = _cancel_events.get(session_id)
+    if cancel_event:
+        cancel_event.set()
     for req_id, event in list(_pending_approvals.items()):
         _approval_results[req_id] = {"approved": False}
         event.set()
