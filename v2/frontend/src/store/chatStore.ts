@@ -6,6 +6,8 @@ interface ChatState {
   containerStatus: 'idle' | 'creating' | 'running' | 'stopped'
   messages: Message[]
   streamingContent: string
+  thinkingContent: string
+  thinkingHistory: string[]
   terminalEntries: Map<string, string[]>
   pendingApproval: ApprovalRequest | null
   pendingPlan: PlanProposal | null
@@ -21,6 +23,8 @@ interface ChatState {
   addMessage: (msg: Message) => void
   appendStreamChunk: (chunk: string) => void
   finalizeStream: () => void
+  setThinking: (content: string) => void
+  finalizeThinking: () => void
   appendTerminal: (execId: string, content: string) => void
   clearTerminal: (execId: string) => void
   setPendingApproval: (req: ApprovalRequest | null) => void
@@ -39,6 +43,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
   containerStatus: 'idle',
   messages: [],
   streamingContent: '',
+  thinkingContent: '',
+  thinkingHistory: [],
   terminalEntries: new Map(),
   pendingApproval: null,
   pendingPlan: null,
@@ -68,6 +74,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
       timestamp: Date.now(),
     }
     set({ messages: [...get().messages, msg], streamingContent: '' })
+  },
+
+  setThinking: (content) => set({ thinkingContent: content }),
+
+  finalizeThinking: () => {
+    const { thinkingContent } = get()
+    if (!thinkingContent) return
+    set((s) => ({
+      thinkingHistory: [...s.thinkingHistory, thinkingContent],
+      thinkingContent: '',
+    }))
   },
 
   appendTerminal: (execId, content) => set((s) => {
@@ -103,6 +120,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
     containerStatus: 'idle',
     messages: [],
     streamingContent: '',
+    thinkingContent: '',
+    thinkingHistory: [],
     terminalEntries: new Map(),
     pendingApproval: null,
     pendingPlan: null,

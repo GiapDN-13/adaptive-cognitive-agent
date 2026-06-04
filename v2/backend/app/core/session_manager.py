@@ -41,6 +41,12 @@ class SessionManager:
         if session and session.container_id:
             await self._docker.destroy_container(session.container_id)
         await delete_session_messages(session_id)
+        # Clean up agent-loop global state to prevent memory leak
+        try:
+            from app.agent.loop import cleanup_session_state
+            cleanup_session_state(session_id)
+        except Exception:
+            pass
 
     async def touch(self, session_id: str) -> None:
         session = self._sessions.get(session_id)

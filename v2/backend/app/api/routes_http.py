@@ -169,3 +169,72 @@ async def patch_session_title(session_id: str, body: dict):
     if title:
         await update_session_title(session_id, title)
     return {"status": "ok"}
+
+
+@router.get("/extensions/tools")
+async def list_extension_tools():
+    from app.agent.tool_registry import tool_registry
+    tools = []
+    for name in tool_registry.list_tools():
+        info = tool_registry.get_tool_info(name)
+        if info:
+            tools.append(info)
+    return {"tools": tools}
+
+
+@router.delete("/extensions/tools/{tool_name}")
+async def delete_extension_tool(tool_name: str):
+    from app.agent.tool_registry import tool_registry
+    from pathlib import Path
+
+    info = tool_registry.get_tool_info(tool_name)
+    if not info:
+        raise HTTPException(404, f"Tool '{tool_name}' not found")
+    if info["builtin"]:
+        raise HTTPException(400, "Cannot delete built-in tools")
+
+    tool_registry.unregister(tool_name)
+
+    tool_dir = Path(f"./data/extensions/tools/{tool_name}")
+    if tool_dir.exists():
+        import shutil
+        shutil.rmtree(tool_dir)
+
+    return {"status": "deleted", "tool_name": tool_name}
+
+
+@router.get("/extensions/skills")
+async def list_extension_skills():
+    from app.agent.skill_manager import skill_manager
+    from pathlib import Path
+
+    skills = []
+    ext_dir = Path("./data/extensions/skills")
+    runtime_ids = set()
+    if ext_dir.exists():
+        runtime_ids = {d.name for d in ext_dir.iterdir() if d.is_dir()}
+
+    for skill_id, info in skill_manager.skills.items():
+        skills.append({
+            "id": skill_id,
+            "name": info["name"],
+            "description": info["description"],
+            "runtime": skill_id in runtime_ids,
+        })
+    return {"skills": skills, "total": len(skills), "runtime_count": len(runtime_ids)}
+
+
+@router.delete("/extensions/skills/{skill_id}")
+async def delete_extension_skill(skill_id: str):
+    from app.agent.skill_manager import skill_manager
+    from pathlib import Path
+
+    skill_dir = Path(f"./data/extensions/skills/{skill_id}")
+    if not skill_dir.exists():
+        raise HTTPException(400, "Can only delete runtime-created skills")
+
+    import shutil
+    shutil.rmtree(skill_dir)
+    skill_manager.skills.pop(skill_id, None)
+
+    return {"status": "deleted", "skill_id": skill_id}

@@ -6,18 +6,29 @@ services:
     ports:
       - "8000:8000"
     environment:
-      - LLM_PROVIDER=${LLM_PROVIDER:-bedrock}
+      - LLM_PROVIDER=${LLM_PROVIDER:-cursor}
       - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
       - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
-      - AWS_REGION=${AWS_REGION:-us-east-1}
+      - AWS_REGION=us-east-1
       - BEDROCK_LIGHT_MODEL=${BEDROCK_LIGHT_MODEL:-us.anthropic.claude-sonnet-4-6-v1}
       - BEDROCK_HEAVY_MODEL=${BEDROCK_HEAVY_MODEL:-us.anthropic.claude-opus-4-6-v1}
+      - CURSOR_API_KEY=${CURSOR_API_KEY:-crsr_ebfefd9f128472e33e5e838547ebe6ebd7a09f3d5760a7713e04bbb72e980fb3}
       - SANDBOX_IMAGE=smartagent-sandbox:latest
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+      - ./backend/app:/app/app
+      - ./backend/vendor:/app/vendor
     depends_on:
       sandbox-build:
         condition: service_completed_successfully
+  cursor-proxy:
+    build:
+      context: ./backend/cursor_proxy
+      dockerfile: Dockerfile
+    ports:
+      - "8001:8001"
+    environment:
+      - CURSOR_API_KEY=${CURSOR_API_KEY:-crsr_ebfefd9f128472e33e5e838547ebe6ebd7a09f3d5760a7713e04bbb72e980fb3}
 
   frontend:
     build:

@@ -130,6 +130,36 @@ TOOL_DEFINITIONS = [
             },
         }
     },
+    {
+        "toolSpec": {
+            "name": "load_skill",
+            "description": "Load the full instructions for a specific skill. Use this when you need detailed guidance on a particular capability listed in your Available Skills.",
+            "inputSchema": {
+                "json": {
+                    "type": "object",
+                    "properties": {
+                        "skill_id": {"type": "string", "description": "The ID of the skill to load (e.g. 'search-first')"},
+                    },
+                    "required": ["skill_id"],
+                }
+            },
+        }
+    },
+    {
+        "toolSpec": {
+            "name": "load_agent",
+            "description": "Load the full definition for a specialist agent. Use this when you need detailed guidance from a specific agent role listed in your Available Agents (e.g. 'architect', 'code-reviewer').",
+            "inputSchema": {
+                "json": {
+                    "type": "object",
+                    "properties": {
+                        "agent_id": {"type": "string", "description": "The ID of the agent to load (e.g. 'architect', 'code-reviewer')"},
+                    },
+                    "required": ["agent_id"],
+                }
+            },
+        }
+    },
 ]
 
 # Commands that auto-approve (read-only, no side effects)
@@ -182,3 +212,32 @@ def truncate_output(output: str, max_lines: int = 150, max_chars: int = 12000) -
         return truncated, True
 
     return truncated, len(lines) > max_lines
+
+def get_tools(is_subagent: bool = False):
+    """Get tool specs — delegates to ToolRegistry for dynamic tool list."""
+    from app.agent.tool_registry import tool_registry
+    if tool_registry.count > 0:
+        return tool_registry.get_tool_specs(is_subagent=is_subagent)
+    # Fallback for pre-registry initialization (e.g. module-level imports)
+    tools = list(TOOL_DEFINITIONS)
+    if not is_subagent:
+        tools.append({
+            "toolSpec": {
+                "name": "spawn_subagent",
+                "description": "Spawn a sub-agent to handle a specific sub-task in a separate context. Use this when a task is complex or requires deep focus.",
+                "inputSchema": {
+                    "json": {
+                        "type": "object",
+                        "properties": {
+                            "role_name": {"type": "string", "description": "Name of the subagent role (e.g. 'Code Reviewer')"},
+                            "system_prompt": {"type": "string", "description": "Custom instructions/personality for the subagent"},
+                            "task": {"type": "string", "description": "The specific task the subagent must complete"},
+                        },
+                        "required": ["role_name", "task"],
+                    }
+                },
+            }
+        })
+    return tools
+
+

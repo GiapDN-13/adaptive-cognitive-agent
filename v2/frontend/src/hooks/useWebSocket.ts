@@ -9,6 +9,16 @@ export function useWebSocket() {
 
   const handleMessage = useCallback((msg: ServerMessage) => {
     switch (msg.type) {
+      case 'agent_thinking' as any: {
+        const { setThinking, finalizeThinking } = useChatStore.getState()
+        if ((msg as any).done) {
+          finalizeThinking()
+        } else {
+          setThinking((msg as any).content || '')
+        }
+        break
+      }
+
       case 'agent_chunk':
         if (msg.done) {
           finalizeStream()

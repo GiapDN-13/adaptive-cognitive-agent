@@ -95,10 +95,10 @@ class BedrockClient:
             try:
                 event = await asyncio.wait_for(
                     asyncio.to_thread(_next_event, it),
-                    timeout=60.0,
+                    timeout=120.0,
                 )
             except asyncio.TimeoutError:
-                raise RuntimeError("LLM stream stalled: no data for 60s")
+                raise RuntimeError("LLM stream stalled: no data for 120s")
             if event is None:
                 break
             yield event
@@ -178,5 +178,85 @@ class BedrockClient:
         }
 
 
-def create_llm_client() -> BedrockClient:
+from app.llm.azure_client import AzureOpenAIClient
+import aiohttp
+
+class CursorClient:
+    def __init__(self):
+        self.proxy_url = settings.cursor_proxy_url
+        self.api_key = settings.cursor_api_key
+
+    async def converse(self, messages, system, tools=None, temperature=0.4, max_tokens=64000):
+        # Non-streaming not fully implemented in proxy for tools, fallback to stream_collect
+        raise NotImplementedError("Use converse_stream_collect for Cursor")
+
+    async def converse_stream(self, messages, system, tools=None, temperature=0.4, max_tokens=64000, cancel_event=None):
+        payload = {
+            "model": "composer-2.5",
+            "messages": [{"role": "system", "content": system}] + messages,
+            "stream": True
+        }
+        
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                self.proxy_url,
+                json=payload,
+                headers={"Authorization": f"Bearer {self.api_key}"}
+            ) as resp:
+                if resp.status != 200:
+                    error_text = await resp.text()
+                    raise RuntimeError(f"Cursor Proxy Error: {resp.status} - {error_text}")
+                
+                async for line in resp.content:
+                    if cancel_event and cancel_event.is_set():
+                        break
+                    line = line.decode('utf-8').strip()
+                    if not line:
+                        continue
+                    if line.startswith("data: "):
+                        data = line[6:]
+                        if data == "[DONE]":
+                            break
+                        try:
+                            chunk = json.loads(data)
+                            delta = chunk["choices"][0].get("delta", {})
+                            content = delta.get("content")
+                            if content:
+                                yield {"contentBlockDelta": {"delta": {"text": content}}}
+                        except json.JSONDecodeError:
+                            pass
+                
+                yield {"messageStop": {"stopReason": "end_turn"}}
+
+    async def converse_stream_collect(self, messages, system, tools=None, temperature=0.4, max_tokens=64000, on_text_chunk=None, cancel_event=None):
+        content_blocks = []
+        current_text = ""
+        stop_reason = "end_turn"
+
+        async for event in self.converse_stream(messages, system, tools, temperature, max_tokens, cancel_event):
+            if "contentBlockDelta" in event:
+                text = event["contentBlockDelta"]["delta"].get("text", "")
+                current_text += text
+                if on_text_chunk:
+                    await on_text_chunk(text)
+            elif "messageStop" in event:
+                stop_reason = event["messageStop"].get("stopReason", "end_turn")
+        
+        if current_text:
+            content_blocks.append({"text": current_text})
+            
+        return {
+            "stopReason": stop_reason,
+            "output": {"message": {"content": content_blocks}},
+            "usage": {}
+        }
+
+
+
+def create_llm_client():
+    if settings.llm_provider == "cursor":
+        return CursorClient()
+    if settings.llm_provider == "azure":
+        return AzureOpenAIClient()
     return BedrockClient()
+

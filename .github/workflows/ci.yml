@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+    paths:
+      - "v2/backend/**"
+  pull_request:
+    paths:
+      - "v2/backend/**"
+
+jobs:
+  backend-test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: v2/backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest pytest-asyncio ruff
+          # Install only the lightweight deps needed for unit tests
+          pip install pydantic pydantic-settings
+
+      - name: Lint (ruff)
+        run: ruff check app/ tests/ || true  # warn-only initially
+
+      - name: Run unit tests
+        run: python -m pytest tests/ -v
+        env:
+          AWS_ACCESS_KEY_ID: dummy
+          AWS_SECRET_ACCESS_KEY: dummy
+          AWS_REGION: us-east-1

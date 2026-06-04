@@ -3,11 +3,8 @@ import threading
 import time
 from typing import Callable
 
-from app.llm.client import BedrockClient
-
-
 async def stream_agent_response(
-    client: BedrockClient,
+    client,
     messages: list[dict],
     system: str,
     tools: list[dict],

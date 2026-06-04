@@ -11,3 +11,19 @@ wheels/
 v2/frontend/node_modules/
 v2/frontend/dist/
 v2/backend/data/
+
+# Secrets — never commit
+.env
+*/.env
+**/.env
+!.env.example
+
+# Node modules anywhere
+node_modules/
+
+# Python cache
+**/__pycache__/
+
+# Test artifacts
+*.output
+rag_test_events.json

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Play, Square, Loader2, Cpu, HardDrive, History, FolderOpen } from 'lucide-react'
+import { Play, Square, Loader2, Cpu, HardDrive, History, FolderOpen, Wrench } from 'lucide-react'
 import { useChatStore } from '@/store/chatStore'
 import { getSessionStats } from '@/api/http'
 
@@ -9,9 +9,11 @@ interface Props {
   onHistoryOpen: () => void
   onFileBrowserToggle: () => void
   fileBrowserOpen: boolean
+  onToolsPanelToggle: () => void
+  toolsPanelOpen: boolean
 }
 
-export function SessionPanel({ onStart, onEnd, onHistoryOpen, onFileBrowserToggle, fileBrowserOpen }: Props) {
+export function SessionPanel({ onStart, onEnd, onHistoryOpen, onFileBrowserToggle, fileBrowserOpen, onToolsPanelToggle, toolsPanelOpen }: Props) {
   const { containerStatus, sessionId } = useChatStore()
   const [stats, setStats] = useState({ cpu_percent: 0, memory_mb: 0 })
 
@@ -60,13 +62,22 @@ export function SessionPanel({ onStart, onEnd, onHistoryOpen, onFileBrowserToggl
 
       <div className="ml-auto flex items-center gap-2">
         {containerStatus === 'running' && (
-          <button
-            onClick={onFileBrowserToggle}
-            className={`p-1.5 rounded transition ${fileBrowserOpen ? 'bg-primary/20 text-primary' : 'hover:bg-white/10 text-gray-400'}`}
-            title="File Browser"
-          >
-            <FolderOpen size={14} />
-          </button>
+          <>
+            <button
+              onClick={onToolsPanelToggle}
+              className={`p-1.5 rounded transition ${toolsPanelOpen ? 'bg-primary/20 text-primary' : 'hover:bg-white/10 text-gray-400'}`}
+              title="Extensions"
+            >
+              <Wrench size={14} />
+            </button>
+            <button
+              onClick={onFileBrowserToggle}
+              className={`p-1.5 rounded transition ${fileBrowserOpen ? 'bg-primary/20 text-primary' : 'hover:bg-white/10 text-gray-400'}`}
+              title="File Browser"
+            >
+              <FolderOpen size={14} />
+            </button>
+          </>
         )}
 
         {containerStatus === 'idle' && (

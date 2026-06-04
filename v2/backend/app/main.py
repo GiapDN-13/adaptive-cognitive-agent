@@ -17,6 +17,20 @@ from app.api.routes_ws import websocket_endpoint
 async def lifespan(app: FastAPI):
     init_managers()
 
+    # Initialize tool registry: builtins → meta-tools → persisted extensions
+    from app.agent.tool_registry import tool_registry
+    from app.agent.builtin_tools import register_all_builtins
+    from app.agent.meta_tools import register_meta_tools
+    from app.agent.extension_loader import load_all_extensions
+
+    register_all_builtins(tool_registry)
+    register_meta_tools(tool_registry)
+    ext_summary = load_all_extensions()
+    logging.getLogger(__name__).info(
+        f"ToolRegistry ready: {tool_registry.count} tools registered "
+        f"(runtime: {ext_summary['tools']} tools, {ext_summary['skills']} skills, {ext_summary['hooks']} hooks)"
+    )
+
     cleanup_task = asyncio.create_task(_idle_cleanup_loop())
 
     yield

@@ -2,27 +2,76 @@
 @tailwind components;
 @tailwind utilities;
 
-body {
-  margin: 0;
-  padding: 0;
-  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+@layer base {
+  :root {
+    --bg: #0a0a0a;
+    --surface: #141414;
+    --surface-2: #1a1a1a;
+    --border: rgba(255, 255, 255, 0.06);
+    --border-active: rgba(255, 255, 255, 0.12);
+    --primary: #0E7C6B;
+    --primary-glow: rgba(14, 124, 107, 0.12);
+  }
+
+  body {
+    margin: 0;
+    padding: 0;
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    background: var(--bg);
+    color: #e5e5e5;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  pre {
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
 }
 
-pre {
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
+/* Scrollbar */
 ::-webkit-scrollbar {
-  width: 6px;
+  width: 5px;
+  height: 5px;
 }
 ::-webkit-scrollbar-track {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.1);
-  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 4px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.15);
+}
+
+/* Smooth transitions for panels */
+@layer utilities {
+  .panel-transition {
+    transition: all 200ms cubic-bezier(0.4, 0, 0.2, 1);
+  }
+}
+
+/* Code block styling */
+.prose pre {
+  background: rgba(0, 0, 0, 0.4) !important;
+  border: 1px solid rgba(255, 255, 255, 0.06) !important;
+  border-radius: 8px !important;
+  font-size: 12px !important;
+  line-height: 1.5 !important;
+}
+
+.prose code {
+  font-size: 12px !important;
+  font-family: 'JetBrains Mono', 'Fira Code', 'SF Mono', monospace !important;
+}
+
+/* Pulse glow for active states */
+@keyframes glow-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(14, 124, 107, 0); }
+  50% { box-shadow: 0 0 8px 2px rgba(14, 124, 107, 0.3); }
+}
+
+.glow-active {
+  animation: glow-pulse 2s ease-in-out infinite;
 }

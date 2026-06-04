@@ -29,12 +29,12 @@ function ConnectionBanner() {
 }
 
 export function ChatContainer() {
-  const { messages, streamingContent, isAgentWorking, agentStatus } = useChatStore()
+  const { messages, streamingContent, thinkingContent, isAgentWorking, agentStatus } = useChatStore()
   const bottomRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages, streamingContent])
+  }, [messages, streamingContent, thinkingContent])
 
   return (
     <div className="flex-1 overflow-y-auto px-4 py-4 space-y-3">
@@ -50,6 +50,26 @@ export function ChatContainer() {
       {messages.map((msg) => (
         <MessageBubble key={msg.id} message={msg} />
       ))}
+
+      {/* Thinking bubble */}
+      {thinkingContent && (
+        <div className="flex gap-3">
+          <div className="w-7 h-7 rounded-full flex items-center justify-center shrink-0 mt-1 bg-purple-500/10">
+            <Bot size={14} className="text-purple-400" />
+          </div>
+          <div className="max-w-[85%] rounded-xl px-4 py-3 bg-purple-900/10 border border-purple-500/20">
+            <div className="flex items-center gap-2 mb-1">
+              <span className="text-[10px] uppercase tracking-wider text-purple-400/70 font-medium">Thinking</span>
+              <span className="flex gap-0.5">
+                <span className="w-1 h-1 rounded-full bg-purple-400/60 animate-bounce" style={{ animationDelay: '0ms' }} />
+                <span className="w-1 h-1 rounded-full bg-purple-400/60 animate-bounce" style={{ animationDelay: '150ms' }} />
+                <span className="w-1 h-1 rounded-full bg-purple-400/60 animate-bounce" style={{ animationDelay: '300ms' }} />
+              </span>
+            </div>
+            <p className="text-sm text-gray-400 italic leading-relaxed whitespace-pre-wrap">{thinkingContent}</p>
+          </div>
+        </div>
+      )}
 
       {streamingContent && (
         <div className="flex gap-3">
