@@ -1,12 +1,13 @@
 """Unit tests for hook_manager — pre/post hooks, GateGuard, dangerous command detection."""
 import pytest
+
 from app.agent.hook_manager import (
     HookManager,
+    _record_tool_call,
+    clear_session_history,
     dangerous_command_pre_hook,
     gateguard_pre_hook,
     secret_detection_pre_hook,
-    _record_tool_call,
-    clear_session_history,
 )
 
 

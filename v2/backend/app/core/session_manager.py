@@ -3,7 +3,7 @@ from datetime import datetime
 
 from app.config import settings
 from app.core.docker_manager import DockerManager
-from app.core.persistence import load_session_messages, delete_session_messages, save_session_meta
+from app.core.persistence import delete_session_messages, save_session_meta
 from app.models.session import ContainerConfig, Session
 
 

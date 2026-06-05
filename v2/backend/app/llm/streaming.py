@@ -3,6 +3,7 @@ import threading
 import time
 from typing import Callable
 
+
 async def stream_agent_response(
     client,
     messages: list[dict],
@@ -12,6 +13,7 @@ async def stream_agent_response(
     temperature: float = 0.4,
     max_tokens: int = 64000,
     cancel_event: threading.Event | None = None,
+    model: str | None = None,
 ) -> dict:
     last_activity = time.monotonic()
 
@@ -48,10 +50,11 @@ async def stream_agent_response(
             max_tokens=max_tokens,
             on_text_chunk=on_chunk,
             cancel_event=cancel_event,
+            model=model,
         )
     except asyncio.CancelledError:
         raise
-    except Exception as e:
+    except Exception:
         await ws_send({"type": "agent_chunk", "content": "", "done": True})
         raise
     finally:

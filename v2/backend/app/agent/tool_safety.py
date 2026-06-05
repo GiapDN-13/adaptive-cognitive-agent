@@ -8,7 +8,6 @@ an import whitelist and forbidden call detection.
 
 import ast
 
-
 FORBIDDEN_MODULES = frozenset({
     "os", "subprocess", "shutil", "sys", "ctypes", "signal",
     "socket", "multiprocessing", "threading", "importlib",

@@ -1,5 +1,4 @@
 import asyncio
-import json
 import logging
 import threading
 import uuid
@@ -8,21 +7,19 @@ from typing import Callable
 from app.config import settings
 
 logger = logging.getLogger(__name__)
-from app.models.session import Session
+from app.agent.hook_manager import hook_manager
+from app.agent.prompts import build_system_prompt
+from app.agent.tool_registry import tool_registry
 from app.agent.tools import (
     get_tools,
     requires_approval,
     truncate_output,
 )
-from app.agent.prompts import build_system_prompt
-from app.llm.client import create_llm_client
-from app.llm.streaming import stream_agent_response
 from app.core.persistence import save_session_messages, update_session_title
 from app.deps import _docker_manager
-from app.agent.hook_manager import hook_manager
-from app.agent.skill_manager import skill_manager
-from app.agent.agent_manager import agent_manager
-from app.agent.tool_registry import tool_registry
+from app.llm.client import create_llm_client
+from app.llm.streaming import stream_agent_response
+from app.models.session import Session
 
 # Increase MAX_ITERATIONS to allow for complex tasks like auditing or massive code generation
 MAX_ITERATIONS = 150
@@ -118,14 +115,6 @@ async def _persist_session_memory(session: Session, ws_send: Callable):
 
     # Extract session summary for memory
     msg_count = len(session.messages)
-    first_user_msg = ""
-    for msg in session.messages:
-        if msg.get("role") == "user":
-            content = msg.get("content", "")
-            if isinstance(content, str):
-                first_user_msg = content[:200]
-            break
-
     memory_note = (
         f"Session had {msg_count} messages, {len(history)} tool calls. "
         f"Tools created: {created_tools_this_session or 'none'}. "
@@ -260,13 +249,13 @@ async def _execute_tool(
     allowed, abort_reason = await hook_manager.execute_pre_hooks(tool_name, tool_input, session.id)
     if not allowed:
         return abort_reason or "Blocked by pre-execution hook."
-        
+
     # 2. Execution
     try:
         result = await _do_execute_tool(session, tool_name, tool_input, ws_send, cancel_event)
     except Exception as e:
         result = f"Tool execution error: {e}"
-        
+
     # 3. Post-hooks
     final_result = await hook_manager.execute_post_hooks(tool_name, tool_input, result, session.id)
     return final_result
@@ -359,7 +348,7 @@ async def _call_llm_with_continuation(
                     if all_text_parts:
                         combined = "".join(all_text_parts)
                         return "end_turn", [{"text": combined}], messages
-                    return "end_turn", [{"text": f"Đã gặp lỗi timeout khi xử lý context lớn. Vui lòng thử lại với câu hỏi ngắn hơn hoặc yêu cầu tôi tổng hợp kết quả."}], messages
+                    return "end_turn", [{"text": "Đã gặp lỗi timeout khi xử lý context lớn. Vui lòng thử lại với câu hỏi ngắn hơn hoặc yêu cầu tôi tổng hợp kết quả."}], messages
             else:
                 logger.error(f"[{session_id[:8]}] LLM error during continuation {cont}: {e}")
                 if all_text_parts:
@@ -434,13 +423,43 @@ def _apply_context_window(messages: list[dict], max_chars: int = 80000) -> list[
     return result
 
 
+def _select_model(messages: list[dict]) -> str | None:
+    """Route to heavy model (Opus) for complex turns, light model (Sonnet) otherwise.
+
+    Heuristic: the last assistant turn that just created a tool, or a turn that
+    will likely synthesize a large report, benefits from the heavy model.
+    Returns None to use the client default (light) model.
+    """
+    heavy = getattr(settings, "bedrock_heavy_model", "")
+    if not heavy:
+        return None
+
+    # Look at the most recent user/tool-result content for routing signals.
+    recent_text = ""
+    for m in messages[-3:]:
+        content = m.get("content", "")
+        recent_text += str(content).lower()
+
+    # Heavy-model triggers: tool creation, synthesis, final report, deep analysis
+    heavy_signals = [
+        "create_tool", "create a tool", "synthesize", "tổng hợp", "báo cáo",
+        "final report", "comprehensive", "root cause", "exploit", "vulnerability",
+        "adversarial", "definition of done",
+    ]
+    if any(sig in recent_text for sig in heavy_signals):
+        return heavy
+    return None  # default light model
+
+
 async def _call_llm(messages: list[dict], system_prompt: str, tools_list: list, ws_send: Callable = None, cancel_event: threading.Event | None = None, temperature: float = 0.4) -> dict:
     client = _get_llm()
     messages = _apply_context_window(messages)
     msg_count = len(messages)
     total_chars = sum(len(str(m.get("content", ""))) for m in messages)
     timeout = max(180, min(600, total_chars // 100))
-    logger.info(f"_call_llm: {msg_count} messages, ~{total_chars} chars, timeout={timeout}s, temp={temperature}")
+    model = _select_model(messages)
+    model_label = (model or "light").split(".")[-1]
+    logger.info(f"_call_llm: {msg_count} messages, ~{total_chars} chars, timeout={timeout}s, temp={temperature}, model={model_label}")
     try:
         if ws_send:
             return await asyncio.wait_for(
@@ -451,6 +470,7 @@ async def _call_llm(messages: list[dict], system_prompt: str, tools_list: list, 
                     tools=tools_list,
                     ws_send=ws_send,
                     cancel_event=cancel_event,
+                    model=model,
                 ),
                 timeout=timeout,
             )
@@ -459,6 +479,7 @@ async def _call_llm(messages: list[dict], system_prompt: str, tools_list: list, 
                 messages=messages,
                 system=system_prompt,
                 tools=tools_list,
+                model=model,
             ),
             timeout=timeout,
         )
@@ -534,6 +555,15 @@ def cleanup_session_state(session_id: str):
     try:
         from app.agent.hook_manager import clear_session_history
         clear_session_history(session_id)
+    except Exception:
+        pass
+    # Pipeline checkpoints
+    try:
+        from pathlib import Path
+        cp_dir = Path("./data/checkpoints")
+        if cp_dir.exists():
+            for f in cp_dir.glob(f"{session_id}_*.json"):
+                f.unlink(missing_ok=True)
     except Exception:
         pass
     logger.info(f"[{session_id[:8]}] cleaned up session global state")

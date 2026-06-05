@@ -1,10 +1,11 @@
-import asyncio
 import json
 import logging
 import threading
 import uuid
 from typing import AsyncGenerator
+
 import httpx
+
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -31,20 +32,20 @@ def map_messages_to_openai(bedrock_messages: list[dict], system_prompt: str | No
     openai_messages = []
     if system_prompt:
         openai_messages.append({"role": "system", "content": system_prompt})
-        
+
     for msg in bedrock_messages:
         role = msg.get("role")
         content = msg.get("content", [])
-        
+
         # If content is already a string
         if isinstance(content, str):
             openai_messages.append({"role": role, "content": content})
             continue
-            
+
         text_parts = []
         tool_calls = []
         tool_results = []
-        
+
         for block in content:
             if "text" in block:
                 text_parts.append(block["text"])
@@ -71,7 +72,7 @@ def map_messages_to_openai(bedrock_messages: list[dict], system_prompt: str | No
                     "tool_call_id": tr.get("toolUseId"),
                     "content": tr_text
                 })
-                
+
         if tool_results:
             # Under OpenAI schema, each toolResult must be its own message with role 'tool'
             for tr_msg in tool_results:
@@ -82,12 +83,12 @@ def map_messages_to_openai(bedrock_messages: list[dict], system_prompt: str | No
                 openai_msg["content"] = "\n".join(text_parts)
             else:
                 openai_msg["content"] = None
-                
+
             if tool_calls:
                 openai_msg["tool_calls"] = tool_calls
-                
+
             openai_messages.append(openai_msg)
-            
+
     return openai_messages
 
 
@@ -99,23 +100,23 @@ def map_openai_response_to_bedrock(openai_resp: dict) -> dict:
             "output": {"message": {"role": "assistant", "content": []}},
             "usage": {"inputTokens": 0, "outputTokens": 0, "totalTokens": 0}
         }
-        
+
     choice = choices[0]
     finish_reason = choice.get("finish_reason", "stop")
-    
+
     stop_reason = "end_turn"
     if finish_reason == "tool_calls":
         stop_reason = "tool_use"
     elif finish_reason == "length":
         stop_reason = "max_tokens"
-        
+
     message = choice.get("message", {})
     content_blocks = []
-    
+
     text = message.get("content")
     if text:
         content_blocks.append({"text": text})
-        
+
     tool_calls = message.get("tool_calls", [])
     for tc in tool_calls:
         func = tc.get("function", {})
@@ -131,9 +132,9 @@ def map_openai_response_to_bedrock(openai_resp: dict) -> dict:
                 "input": inputs
             }
         })
-        
+
     usage = openai_resp.get("usage", {})
-    
+
     return {
         "stopReason": stop_reason,
         "output": {
@@ -167,10 +168,11 @@ class AzureOpenAIClient:
         tools: list[dict] | None = None,
         temperature: float = 0.4,
         max_tokens: int = 4096,
+        model: str | None = None,
     ) -> dict:
         openai_messages = map_messages_to_openai(messages, system)
         openai_tools = map_tools_to_openai(tools)
-        
+
         # Build payload using max_completion_tokens (required by GPT-5.4 Azure)
         payload = {
             "messages": openai_messages,
@@ -179,7 +181,7 @@ class AzureOpenAIClient:
         }
         if openai_tools:
             payload["tools"] = openai_tools
-            
+
         logger.info(f"Calling Azure OpenAI: {self.endpoint} (converse)")
         async with httpx.AsyncClient(timeout=120.0) as client:
             response = await client.post(self.endpoint, headers=self.headers, json=payload)
@@ -187,7 +189,7 @@ class AzureOpenAIClient:
                 err_body = response.text
                 logger.error(f"Azure OpenAI Error {response.status_code}: {err_body}")
                 raise RuntimeError(f"Azure OpenAI HTTP {response.status_code}: {err_body}")
-            
+
             resp_json = response.json()
             return map_openai_response_to_bedrock(resp_json)
 
@@ -199,10 +201,11 @@ class AzureOpenAIClient:
         temperature: float = 0.4,
         max_tokens: int = 4096,
         cancel_event: threading.Event | None = None,
+        model: str | None = None,
     ) -> AsyncGenerator[dict, None]:
         openai_messages = map_messages_to_openai(messages, system)
         openai_tools = map_tools_to_openai(tools)
-        
+
         payload = {
             "messages": openai_messages,
             "temperature": temperature,
@@ -211,20 +214,20 @@ class AzureOpenAIClient:
         }
         if openai_tools:
             payload["tools"] = openai_tools
-            
+
         logger.info(f"Calling Azure OpenAI: {self.endpoint} (converse_stream)")
-        
+
         # Keep track of delta emission states
         started_text = False
         active_tool_calls = {}  # key: index -> {"id": ..., "name": ...}
-        
+
         async with httpx.AsyncClient(timeout=120.0) as client:
             async with client.stream("POST", self.endpoint, headers=self.headers, json=payload) as response:
                 if response.status_code != 200:
                     err_body = await response.aread()
                     logger.error(f"Azure OpenAI stream error {response.status_code}: {err_body.decode('utf-8')}")
                     raise RuntimeError(f"Azure OpenAI Stream HTTP {response.status_code}: {err_body.decode('utf-8')}")
-                
+
                 async for line in response.aiter_lines():
                     if cancel_event and cancel_event.is_set():
                         break
@@ -239,24 +242,24 @@ class AzureOpenAIClient:
                             chunk = json.loads(data_str)
                         except Exception:
                             continue
-                            
+
                         choices = chunk.get("choices", [])
                         if not choices:
                             continue
-                            
+
                         choice = choices[0]
                         delta = choice.get("delta", {})
                         content = delta.get("content")
                         tool_calls = delta.get("tool_calls", [])
                         finish_reason = choice.get("finish_reason")
-                        
+
                         # 1. Text chunk delta
                         if content:
                             if not started_text:
                                 yield {"contentBlockStart": {"start": {"text": ""}}}
                                 started_text = True
                             yield {"contentBlockDelta": {"delta": {"text": content}}}
-                            
+
                         # 2. Tool calls delta
                         if tool_calls:
                             for tc in tool_calls:
@@ -265,18 +268,18 @@ class AzureOpenAIClient:
                                 tc_id = tc.get("id")
                                 tc_name = func.get("name")
                                 tc_args = func.get("arguments", "")
-                                
+
                                 if idx not in active_tool_calls:
                                     # Stop text block if it was active
                                     if started_text:
                                         yield {"contentBlockStop": {}}
                                         started_text = False
-                                        
+
                                     active_tool_calls[idx] = {
                                         "id": tc_id or f"call_{uuid.uuid4().hex[:8]}",
                                         "name": tc_name or "unknown"
                                     }
-                                    
+
                                     yield {
                                         "contentBlockStart": {
                                             "start": {
@@ -287,7 +290,7 @@ class AzureOpenAIClient:
                                             }
                                         }
                                     }
-                                    
+
                                 if tc_args:
                                     yield {
                                         "contentBlockDelta": {
@@ -298,25 +301,25 @@ class AzureOpenAIClient:
                                             }
                                         }
                                     }
-                                    
+
                         # 3. Finish reason / message stop
                         if finish_reason is not None:
                             if started_text:
                                 yield {"contentBlockStop": {}}
                                 started_text = False
-                                
+
                             for idx in list(active_tool_calls.keys()):
                                 yield {"contentBlockStop": {}}
                                 del active_tool_calls[idx]
-                                
+
                             stop_reason = "end_turn"
                             if finish_reason == "tool_calls":
                                 stop_reason = "tool_use"
                             elif finish_reason == "length":
                                 stop_reason = "max_tokens"
-                                
+
                             yield {"messageStop": {"stopReason": stop_reason}}
-                            
+
                             usage = chunk.get("usage", {})
                             if usage:
                                 yield {
@@ -340,6 +343,7 @@ class AzureOpenAIClient:
         max_tokens: int = 4096,
         on_text_chunk: callable = None,
         cancel_event: threading.Event | None = None,
+        model: str | None = None,
     ) -> dict:
         content_blocks = []
         current_text = ""
@@ -402,7 +406,7 @@ class AzureOpenAIClient:
         # Flush any trailing text just in case
         if current_text:
             content_blocks.append({"text": current_text})
-            
+
         return {
             "stopReason": stop_reason,
             "output": {"message": {"content": content_blocks}},

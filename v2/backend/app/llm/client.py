@@ -40,9 +40,10 @@ class BedrockClient:
         tools: list[dict] | None = None,
         temperature: float = 0.4,
         max_tokens: int = 64000,
+        model: str | None = None,
     ) -> dict:
         kwargs = {
-            "modelId": settings.bedrock_light_model,
+            "modelId": model or settings.bedrock_light_model,
             "system": [{"text": system}],
             "messages": messages,
             "inferenceConfig": {"temperature": temperature, "maxTokens": max_tokens},
@@ -61,9 +62,10 @@ class BedrockClient:
         temperature: float = 0.4,
         max_tokens: int = 64000,
         cancel_event: threading.Event | None = None,
+        model: str | None = None,
     ) -> AsyncGenerator[dict, None]:
         kwargs = {
-            "modelId": settings.bedrock_light_model,
+            "modelId": model or settings.bedrock_light_model,
             "system": [{"text": system}],
             "messages": messages,
             "inferenceConfig": {"temperature": temperature, "maxTokens": max_tokens},
@@ -112,6 +114,7 @@ class BedrockClient:
         max_tokens: int = 64000,
         on_text_chunk: callable = None,
         cancel_event: threading.Event | None = None,
+        model: str | None = None,
     ) -> dict:
         content_blocks = []
         current_text = ""
@@ -127,6 +130,7 @@ class BedrockClient:
             temperature=temperature,
             max_tokens=max_tokens,
             cancel_event=cancel_event,
+            model=model,
         ):
             if "contentBlockStart" in event:
                 start = event["contentBlockStart"].get("start", {})
@@ -179,24 +183,25 @@ class BedrockClient:
 
 
 from app.llm.azure_client import AzureOpenAIClient
-import aiohttp
+
 
 class CursorClient:
     def __init__(self):
         self.proxy_url = settings.cursor_proxy_url
         self.api_key = settings.cursor_api_key
 
-    async def converse(self, messages, system, tools=None, temperature=0.4, max_tokens=64000):
+    async def converse(self, messages, system, tools=None, temperature=0.4, max_tokens=64000, model=None):
         # Non-streaming not fully implemented in proxy for tools, fallback to stream_collect
         raise NotImplementedError("Use converse_stream_collect for Cursor")
 
-    async def converse_stream(self, messages, system, tools=None, temperature=0.4, max_tokens=64000, cancel_event=None):
+    async def converse_stream(self, messages, system, tools=None, temperature=0.4, max_tokens=64000, cancel_event=None, model=None):
+        import aiohttp  # lazy import — only needed when Cursor provider is active
         payload = {
             "model": "composer-2.5",
             "messages": [{"role": "system", "content": system}] + messages,
             "stream": True
         }
-        
+
         async with aiohttp.ClientSession() as session:
             async with session.post(
                 self.proxy_url,
@@ -206,7 +211,7 @@ class CursorClient:
                 if resp.status != 200:
                     error_text = await resp.text()
                     raise RuntimeError(f"Cursor Proxy Error: {resp.status} - {error_text}")
-                
+
                 async for line in resp.content:
                     if cancel_event and cancel_event.is_set():
                         break
@@ -225,10 +230,10 @@ class CursorClient:
                                 yield {"contentBlockDelta": {"delta": {"text": content}}}
                         except json.JSONDecodeError:
                             pass
-                
+
                 yield {"messageStop": {"stopReason": "end_turn"}}
 
-    async def converse_stream_collect(self, messages, system, tools=None, temperature=0.4, max_tokens=64000, on_text_chunk=None, cancel_event=None):
+    async def converse_stream_collect(self, messages, system, tools=None, temperature=0.4, max_tokens=64000, on_text_chunk=None, cancel_event=None, model=None):
         content_blocks = []
         current_text = ""
         stop_reason = "end_turn"
@@ -241,10 +246,10 @@ class CursorClient:
                     await on_text_chunk(text)
             elif "messageStop" in event:
                 stop_reason = event["messageStop"].get("stopReason", "end_turn")
-        
+
         if current_text:
             content_blocks.append({"text": current_text})
-            
+
         return {
             "stopReason": stop_reason,
             "output": {"message": {"content": content_blocks}},

@@ -1,14 +1,11 @@
 import asyncio
-import tarfile
 import io
-import uuid
-from pathlib import Path
+import tarfile
 from typing import AsyncGenerator
 
 import docker
-from docker.errors import NotFound, APIError
+from docker.errors import NotFound
 
-from app.config import settings
 from app.models.session import ContainerConfig
 
 
@@ -63,8 +60,6 @@ class DockerManager:
     async def exec_command(
         self, container_id: str, command: str, timeout: int = 60
     ) -> AsyncGenerator[str, None]:
-        exec_id = uuid.uuid4().hex[:8]
-
         def _exec():
             container = self._client.containers.get(container_id)
             exec_instance = container.exec_run(

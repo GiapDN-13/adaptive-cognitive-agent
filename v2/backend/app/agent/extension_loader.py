@@ -10,9 +10,9 @@ import json
 import logging
 from pathlib import Path
 
-from app.agent.tool_registry import tool_registry
 from app.agent.hook_manager import hook_manager
-from app.agent.tool_safety import validate_handler_code, validate_hook_code, CodeSafetyError
+from app.agent.tool_registry import tool_registry
+from app.agent.tool_safety import CodeSafetyError, validate_handler_code
 
 logger = logging.getLogger(__name__)
 
@@ -74,7 +74,7 @@ def _load_runtime_tools() -> int:
 
 
 def _load_runtime_skills() -> int:
-    from app.agent.skill_manager import skill_manager, _parse_frontmatter
+    from app.agent.skill_manager import _parse_frontmatter, skill_manager
 
     skills_dir = EXTENSIONS_DIR / "skills"
     if not skills_dir.exists():
@@ -184,6 +184,7 @@ def _build_handler_namespace() -> dict:
     import json as json_mod
     import re as re_mod
     from pathlib import Path as PathCls
+
     from app.deps import _docker_manager
 
     return {
@@ -198,8 +199,8 @@ def _build_handler_namespace() -> dict:
 
 def _build_hook_namespace() -> dict:
     import json as json_mod
-    import re as re_mod
     import logging as logging_mod
+    import re as re_mod
 
     return {
         "__builtins__": __builtins__,

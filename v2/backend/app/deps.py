@@ -1,6 +1,6 @@
 from app.core.docker_manager import DockerManager
-from app.core.session_manager import SessionManager
 from app.core.file_manager import FileManager
+from app.core.session_manager import SessionManager
 
 _docker_manager: DockerManager | None = None
 _session_manager: SessionManager | None = None

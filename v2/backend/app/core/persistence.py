@@ -1,7 +1,8 @@
 import json
-import aiofiles
-from pathlib import Path
 from datetime import datetime
+from pathlib import Path
+
+import aiofiles
 
 SESSIONS_DIR = Path("./data/sessions")
 SESSION_INDEX_PATH = Path("./data/session_index.json")

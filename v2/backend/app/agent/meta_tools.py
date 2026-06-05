@@ -12,7 +12,7 @@ import json
 import logging
 from pathlib import Path
 
-from app.agent.tool_safety import validate_handler_code, validate_hook_code, CodeSafetyError
+from app.agent.tool_safety import CodeSafetyError, validate_handler_code, validate_hook_code
 
 logger = logging.getLogger(__name__)
 
@@ -285,6 +285,7 @@ def _build_handler_namespace() -> dict:
     import json as json_mod
     import re as re_mod
     from pathlib import Path as PathCls
+
     from app.deps import _docker_manager
 
     return {
@@ -300,8 +301,8 @@ def _build_handler_namespace() -> dict:
 def _build_hook_namespace() -> dict:
     """Namespace available to runtime hooks."""
     import json as json_mod
-    import re as re_mod
     import logging as logging_mod
+    import re as re_mod
 
     return {
         "__builtins__": __builtins__,
@@ -313,7 +314,6 @@ def _build_hook_namespace() -> dict:
 
 # Need asyncio import at module level for _compile_handler
 import asyncio
-
 
 # ---------------------------------------------------------------------------
 # Registration

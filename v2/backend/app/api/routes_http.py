@@ -1,11 +1,11 @@
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import Response
 
-from app.deps import get_session_manager, get_file_manager, get_docker_manager
-from app.core.session_manager import SessionManager
-from app.core.file_manager import FileManager
 from app.core.docker_manager import DockerManager
+from app.core.file_manager import FileManager
 from app.core.persistence import list_session_history, load_session_messages, update_session_title
+from app.core.session_manager import SessionManager
+from app.deps import get_docker_manager, get_file_manager, get_session_manager
 from app.models.session import CreateSessionRequest, SessionResponse
 
 router = APIRouter()
@@ -184,8 +184,9 @@ async def list_extension_tools():
 
 @router.delete("/extensions/tools/{tool_name}")
 async def delete_extension_tool(tool_name: str):
-    from app.agent.tool_registry import tool_registry
     from pathlib import Path
+
+    from app.agent.tool_registry import tool_registry
 
     info = tool_registry.get_tool_info(tool_name)
     if not info:
@@ -205,8 +206,9 @@ async def delete_extension_tool(tool_name: str):
 
 @router.get("/extensions/skills")
 async def list_extension_skills():
-    from app.agent.skill_manager import skill_manager
     from pathlib import Path
+
+    from app.agent.skill_manager import skill_manager
 
     skills = []
     ext_dir = Path("./data/extensions/skills")
@@ -226,8 +228,9 @@ async def list_extension_skills():
 
 @router.delete("/extensions/skills/{skill_id}")
 async def delete_extension_skill(skill_id: str):
-    from app.agent.skill_manager import skill_manager
     from pathlib import Path
+
+    from app.agent.skill_manager import skill_manager
 
     skill_dir = Path(f"./data/extensions/skills/{skill_id}")
     if not skill_dir.exists():

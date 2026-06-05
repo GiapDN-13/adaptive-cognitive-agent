@@ -76,7 +76,7 @@ class SkillManager:
 
     def get_skills_catalog(self) -> str:
         """Return a summarized catalog of available skills for the system prompt.
-        
+
         Only includes the top 30 most commonly useful skills to keep prompt size manageable.
         All 246 skills remain available via the `load_skill` tool.
         """

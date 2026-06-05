@@ -1,6 +1,6 @@
 import asyncio
 import uuid
-from typing import AsyncGenerator, Callable
+from typing import Callable
 
 from app.core.docker_manager import DockerManager
 

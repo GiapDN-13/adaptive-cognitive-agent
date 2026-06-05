@@ -1,8 +1,4 @@
 import re
-import uuid
-
-from app.core.docker_manager import DockerManager
-
 
 TOOL_DEFINITIONS = [
     {

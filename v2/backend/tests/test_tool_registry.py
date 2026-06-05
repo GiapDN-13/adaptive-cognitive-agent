@@ -1,5 +1,6 @@
 """Unit tests for ToolRegistry — dispatch, registration, subagent filtering."""
 import pytest
+
 from app.agent.tool_registry import ToolRegistry
 
 

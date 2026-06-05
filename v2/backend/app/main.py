@@ -7,10 +7,10 @@ from fastapi.middleware.cors import CORSMiddleware
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 
-from app.config import settings
-from app.deps import init_managers, get_session_manager
 from app.api.routes_http import router as http_router
 from app.api.routes_ws import websocket_endpoint
+from app.config import settings
+from app.deps import get_session_manager, init_managers
 
 
 @asynccontextmanager
@@ -18,10 +18,10 @@ async def lifespan(app: FastAPI):
     init_managers()
 
     # Initialize tool registry: builtins → meta-tools → persisted extensions
-    from app.agent.tool_registry import tool_registry
     from app.agent.builtin_tools import register_all_builtins
-    from app.agent.meta_tools import register_meta_tools
     from app.agent.extension_loader import load_all_extensions
+    from app.agent.meta_tools import register_meta_tools
+    from app.agent.tool_registry import tool_registry
 
     register_all_builtins(tool_registry)
     register_meta_tools(tool_registry)

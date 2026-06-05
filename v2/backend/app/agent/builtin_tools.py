@@ -8,8 +8,8 @@ Registration function at the bottom wires all handlers + schemas into ToolRegist
 """
 
 import asyncio
-import uuid
 import logging
+import uuid
 
 logger = logging.getLogger(__name__)
 
@@ -19,8 +19,8 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 async def handle_shell_exec(session, tool_input, ws_send, cancel_event) -> str:
-    from app.deps import _docker_manager
     from app.agent.tools import requires_approval, truncate_output
+    from app.deps import _docker_manager
 
     command = tool_input.get("command", "")
     if requires_approval(command):
@@ -106,8 +106,9 @@ async def handle_read_file(session, tool_input, ws_send, cancel_event) -> str:
 
 
 async def handle_web_search(session, tool_input, ws_send, cancel_event) -> str:
-    import requests
     import urllib.parse
+
+    import requests
     from lxml import html
 
     query = tool_input.get("query", "")
@@ -160,13 +161,13 @@ async def handle_think(session, tool_input, ws_send, cancel_event) -> str:
         "content": "",
         "done": True,
     })
-    return f"[Thought recorded]"
+    return "[Thought recorded]"
 
 
 async def handle_verify_work(session, tool_input, ws_send, cancel_event) -> str:
     """Run a verification test against success criteria. Returns structured pass/fail."""
-    from app.deps import _docker_manager
     from app.agent.tools import truncate_output
+    from app.deps import _docker_manager
 
     criterion = tool_input.get("criterion", "")
     test_command = tool_input.get("test_command", "")
@@ -251,7 +252,7 @@ async def handle_propose_plan(session, tool_input, ws_send, cancel_event) -> str
         "title": tool_input.get("title", "Plan"),
         "steps": steps,
     })
-    from app.agent.loop import _wait_for_approval, _execute_plan_steps
+    from app.agent.loop import _execute_plan_steps, _wait_for_approval
     approval = await _wait_for_approval(plan_id)
     if not approval.get("approved"):
         return "Plan rejected by user."
@@ -310,9 +311,50 @@ async def handle_spawn_subagent(session, tool_input, ws_send, cancel_event) -> s
     return f"Sub-Agent '{role_name}' completed. Final response:\n{final_answer}"
 
 
+def _pipeline_checkpoint_path(session_id: str, pipeline_name: str):
+    import re
+    from pathlib import Path
+    safe = re.sub(r"[^a-zA-Z0-9_-]", "_", pipeline_name)[:40]
+    d = Path("./data/checkpoints")
+    d.mkdir(parents=True, exist_ok=True)
+    return d / f"{session_id}_{safe}.json"
+
+
+def _load_pipeline_checkpoint(session_id: str, pipeline_name: str) -> dict:
+    import json
+    path = _pipeline_checkpoint_path(session_id, pipeline_name)
+    if path.exists():
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return {}
+    return {}
+
+
+def _save_pipeline_checkpoint(session_id: str, pipeline_name: str, state: dict):
+    import json
+    path = _pipeline_checkpoint_path(session_id, pipeline_name)
+    try:
+        path.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception as e:
+        logger.error(f"Checkpoint save failed: {e}")
+
+
+def _clear_pipeline_checkpoint(session_id: str, pipeline_name: str):
+    path = _pipeline_checkpoint_path(session_id, pipeline_name)
+    try:
+        path.unlink(missing_ok=True)
+    except Exception:
+        pass
+
+
 async def handle_execute_pipeline(session, tool_input, ws_send, cancel_event) -> str:
-    """Execute a structured pipeline of stages, each as an isolated subagent."""
-    from app.agent.loop import _run_loop, _session_generation, _cancel_flags, _extract_text
+    """Execute a structured pipeline of stages, each as an isolated subagent.
+
+    Supports checkpoint/resume: progress is saved after each stage. If the same
+    pipeline is re-run after a crash, completed stages are skipped.
+    """
+    from app.agent.loop import _cancel_flags, _extract_text, _run_loop, _session_generation
     from app.agent.prompts import build_system_prompt
     from app.agent.tool_registry import tool_registry
 
@@ -323,16 +365,29 @@ async def handle_execute_pipeline(session, tool_input, ws_send, cancel_event) ->
     if not stages:
         return "Error: Pipeline must have at least one stage."
 
-    await ws_send({
-        "type": "agent_message",
-        "content": f"🔄 **Pipeline `{pipeline_name}`** — {len(stages)} stages",
-        "metadata": None,
-    })
+    # Load checkpoint — resume from where we left off
+    checkpoint = _load_pipeline_checkpoint(session.id, pipeline_name)
+    completed_stages = checkpoint.get("completed", {})  # {stage_index: result}
+    resumed = len(completed_stages) > 0
+
+    intro = f"🔄 **Pipeline `{pipeline_name}`** — {len(stages)} stages"
+    if resumed:
+        intro += f" (resume: bỏ qua {len(completed_stages)} stage đã hoàn thành)"
+    await ws_send({"type": "agent_message", "content": intro, "metadata": None})
 
     results = []
     accumulated_findings = ""
+    # Restore prior results into context
+    for idx_str in sorted(completed_stages.keys(), key=lambda x: int(x)):
+        prior = completed_stages[idx_str]
+        results.append(prior["result_block"])
+        accumulated_findings += f"\n### {prior['name']}\n{prior['summary']}\n"
 
     for i, stage in enumerate(stages):
+        # Skip stages already completed in a prior run (checkpoint resume)
+        if str(i) in completed_stages:
+            continue
+
         if _cancel_flags.get(session.id):
             results.append(f"Stage {i+1}: CANCELLED")
             break
@@ -386,8 +441,17 @@ async def handle_execute_pipeline(session, tool_input, ws_send, cancel_event) ->
             if sub_messages and sub_messages[-1].get("role") == "assistant":
                 stage_result = _extract_text(sub_messages[-1].get("content", []))
 
-            results.append(f"## Stage {i+1}: {stage_name}\n{stage_result}")
+            result_block = f"## Stage {i+1}: {stage_name}\n{stage_result}"
+            results.append(result_block)
             accumulated_findings += f"\n### {stage_name}\n{stage_result[:2000]}\n"
+
+            # Save checkpoint after successful stage
+            completed_stages[str(i)] = {
+                "name": stage_name,
+                "result_block": result_block,
+                "summary": stage_result[:2000],
+            }
+            _save_pipeline_checkpoint(session.id, pipeline_name, {"completed": completed_stages})
 
             await ws_send({
                 "type": "agent_message",
@@ -400,7 +464,12 @@ async def handle_execute_pipeline(session, tool_input, ws_send, cancel_event) ->
             results.append(f"## Stage {i+1}: {stage_name}\n❌ {error_msg}")
             logger.error(f"Pipeline stage error: {error_msg}")
 
-    summary = f"Pipeline '{pipeline_name}' completed: {len(results)}/{len(stages)} stages.\n\n"
+    # Pipeline fully done → clear checkpoint
+    all_done = len(completed_stages) == len(stages)
+    if all_done:
+        _clear_pipeline_checkpoint(session.id, pipeline_name)
+
+    summary = f"Pipeline '{pipeline_name}' completed: {len(completed_stages)}/{len(stages)} stages.\n\n"
     summary += "\n\n---\n\n".join(results)
     return summary
 

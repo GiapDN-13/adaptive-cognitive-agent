@@ -1,11 +1,11 @@
 """Unit tests for tool_safety — AST validation of runtime code."""
 import pytest
+
 from app.agent.tool_safety import (
+    CodeSafetyError,
     validate_handler_code,
     validate_hook_code,
-    CodeSafetyError,
 )
-
 
 VALID_HANDLER = '''
 async def handler(session, tool_input, ws_send, cancel_event):
