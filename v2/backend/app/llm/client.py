@@ -7,6 +7,18 @@ from typing import AsyncGenerator
 from app.config import settings
 
 
+# Models that deprecated the `temperature` inference param (Opus 4.7+).
+# For these we must omit temperature from inferenceConfig.
+_NO_TEMPERATURE_MODELS = ("opus-4-7", "opus-4-8")
+
+
+def _build_inference_config(model_id: str, temperature: float, max_tokens: int) -> dict:
+    cfg = {"maxTokens": max_tokens}
+    if not any(tag in (model_id or "") for tag in _NO_TEMPERATURE_MODELS):
+        cfg["temperature"] = temperature
+    return cfg
+
+
 @dataclass
 class LLMResponse:
     text: str
@@ -42,11 +54,12 @@ class BedrockClient:
         max_tokens: int = 64000,
         model: str | None = None,
     ) -> dict:
+        model_id = model or settings.bedrock_light_model
         kwargs = {
-            "modelId": model or settings.bedrock_light_model,
+            "modelId": model_id,
             "system": [{"text": system}],
             "messages": messages,
-            "inferenceConfig": {"temperature": temperature, "maxTokens": max_tokens},
+            "inferenceConfig": _build_inference_config(model_id, temperature, max_tokens),
         }
         if tools:
             kwargs["toolConfig"] = {"tools": tools}
@@ -64,11 +77,12 @@ class BedrockClient:
         cancel_event: threading.Event | None = None,
         model: str | None = None,
     ) -> AsyncGenerator[dict, None]:
+        model_id = model or settings.bedrock_light_model
         kwargs = {
-            "modelId": model or settings.bedrock_light_model,
+            "modelId": model_id,
             "system": [{"text": system}],
             "messages": messages,
-            "inferenceConfig": {"temperature": temperature, "maxTokens": max_tokens},
+            "inferenceConfig": _build_inference_config(model_id, temperature, max_tokens),
         }
         if tools:
             kwargs["toolConfig"] = {"tools": tools}
