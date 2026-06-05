@@ -206,3 +206,28 @@ async def test_select_model_routes_heavy_when_enabled(monkeypatch):
 
     light_msgs = [{"role": "user", "content": [{"text": "ls the directory"}]}]
     assert agent_loop._select_model(light_msgs) is None
+
+
+def test_context_window_trims_large_tooluse_file():
+    """Large file content inside toolUse input (write_file) must be trimmable,
+    not just toolResult — otherwise a 20KB file write can't be reduced and stalls."""
+    big = "x" * 20000
+    messages = [{"role": "user", "content": [{"text": "build app"}]}]
+    for i in range(8):
+        messages.append({"role": "assistant", "content": [
+            {"toolUse": {"toolUseId": f"t{i}", "name": "write_file",
+                         "input": {"path": f"/f{i}.py", "content": big}}}]})
+        messages.append({"role": "user", "content": [
+            {"toolResult": {"toolUseId": f"t{i}", "content": [{"text": "File written"}]}}]})
+
+    before = sum(len(str(m.get("content", ""))) for m in messages)
+    result = agent_loop._apply_context_window(messages, max_chars=80000)
+    after = sum(len(str(m.get("content", ""))) for m in result)
+    assert after < before  # was a no-op before the fix
+    assert after < 80000   # genuinely under budget
+
+
+def test_context_window_noop_when_small():
+    """Small context is returned unchanged."""
+    messages = [{"role": "user", "content": [{"text": "hi"}]}]
+    assert agent_loop._apply_context_window(messages, max_chars=80000) is messages

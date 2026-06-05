@@ -383,8 +383,47 @@ async def _call_llm_with_continuation(
     return "end_turn", [{"text": combined}], messages
 
 
+def _trim_large_blocks(content, limit: int = 2000):
+    """Trim large text inside both toolResult (user) and toolUse input (assistant) blocks.
+    Returns possibly-trimmed content list."""
+    if not isinstance(content, list):
+        return content
+    new_content = []
+    for block in content:
+        if "toolResult" in block:
+            rc = block["toolResult"].get("content", [])
+            trimmed_rc = []
+            for item in rc:
+                if "text" in item and len(item["text"]) > limit:
+                    trimmed_rc.append({"text": item["text"][:limit] + "\n...[trimmed]"})
+                else:
+                    trimmed_rc.append(item)
+            new_content.append({"toolResult": {**block["toolResult"], "content": trimmed_rc}})
+        elif "toolUse" in block:
+            # write_file/create_tool put large file content in toolUse input — trim it
+            tu = block["toolUse"]
+            inp = tu.get("input", {})
+            if isinstance(inp, dict):
+                new_inp = {}
+                for k, v in inp.items():
+                    if isinstance(v, str) and len(v) > limit:
+                        new_inp[k] = v[:limit] + "\n...[trimmed]"
+                    else:
+                        new_inp[k] = v
+                new_content.append({"toolUse": {**tu, "input": new_inp}})
+            else:
+                new_content.append(block)
+        elif "text" in block and len(block.get("text", "")) > limit * 2:
+            new_content.append({"text": block["text"][:limit * 2] + "\n...[trimmed]"})
+        else:
+            new_content.append(block)
+    return new_content
+
+
 def _apply_context_window(messages: list[dict], max_chars: int = 80000) -> list[dict]:
-    """Trim old tool results if context exceeds limit. Keep first message (user prompt) and recent messages intact."""
+    """Trim old large blocks if context exceeds limit. Keeps first message (user prompt)
+    and recent messages, but ALSO trims oversized file content (toolUse input) anywhere
+    except the single most recent message — otherwise a 20KB file write can't be reduced."""
     total = sum(len(str(m.get("content", ""))) for m in messages)
     if total <= max_chars:
         return messages
@@ -395,29 +434,30 @@ def _apply_context_window(messages: list[dict], max_chars: int = 80000) -> list[
     if messages:
         result.append(messages[0])
 
-    # For middle messages, progressively trim tool results
+    # Middle messages: trim both toolResult and toolUse-input large blocks
     for msg in messages[1:-6]:
         content = msg.get("content", [])
-        if msg.get("role") == "user" and isinstance(content, list):
-            new_content = []
-            for block in content:
-                if "toolResult" in block:
-                    rc = block["toolResult"].get("content", [])
-                    trimmed_rc = []
-                    for item in rc:
-                        if "text" in item and len(item["text"]) > 2000:
-                            trimmed_rc.append({"text": item["text"][:2000] + "\n...[trimmed]"})
-                        else:
-                            trimmed_rc.append(item)
-                    new_content.append({"toolResult": {**block["toolResult"], "content": trimmed_rc}})
-                else:
-                    new_content.append(block)
-            result.append({"role": "user", "content": new_content})
+        if isinstance(content, list):
+            result.append({"role": msg.get("role"), "content": _trim_large_blocks(content)})
         else:
             result.append(msg)
 
-    # Keep last 6 messages intact (recent context)
-    result.extend(messages[-6:])
+    # Recent 6 messages: keep readable, but if STILL over budget, trim everything
+    # except the very last message (the active turn the LLM needs in full).
+    recent = messages[-6:]
+    interim_total = sum(len(str(m.get("content", ""))) for m in result) + \
+        sum(len(str(m.get("content", ""))) for m in recent)
+    if interim_total > max_chars and len(recent) > 1:
+        for msg in recent[:-1]:
+            content = msg.get("content", [])
+            if isinstance(content, list):
+                result.append({"role": msg.get("role"), "content": _trim_large_blocks(content, limit=1500)})
+            else:
+                result.append(msg)
+        result.append(recent[-1])  # last message intact
+    else:
+        result.extend(recent)
+
     new_total = sum(len(str(m.get("content", ""))) for m in result)
     logger.info(f"Context windowed: {total} -> {new_total} chars")
     return result
