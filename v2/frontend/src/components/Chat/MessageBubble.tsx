@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { User, Bot, AlertCircle, Copy, Check, Download } from 'lucide-react'
+import { User, Bot, AlertCircle, Copy, Check, Download, GitBranch, CheckCircle2 } from 'lucide-react'
 import type { Message } from '@/types/messages'
 
 interface Props {
@@ -11,6 +11,9 @@ interface Props {
 export function MessageBubble({ message }: Props) {
   const isUser = message.role === 'user'
   const isSystem = message.role === 'system'
+  const isSubAgentStart = message.content.includes('🔨 **Khởi tạo Sub-Agent')
+  const isSubAgentDone = message.content.includes('✅ **Sub-Agent')
+  const isSubAgentEvent = isSubAgentStart || isSubAgentDone
   const [copied, setCopied] = useState(false)
 
   const handleCopy = async () => {
@@ -34,14 +37,16 @@ export function MessageBubble({ message }: Props) {
       <div className={`w-7 h-7 rounded-full flex items-center justify-center shrink-0 mt-1 ${
         isUser ? 'bg-primary/20 text-primary' :
         isSystem ? 'bg-red-500/20 text-red-400' :
+        isSubAgentEvent ? 'bg-purple-500/20 text-purple-400' :
         'bg-white/10 text-white'
       }`}>
-        {isUser ? <User size={14} /> : isSystem ? <AlertCircle size={14} /> : <Bot size={14} />}
+        {isUser ? <User size={14} /> : isSystem ? <AlertCircle size={14} /> : isSubAgentStart ? <GitBranch size={14} /> : isSubAgentDone ? <CheckCircle2 size={14} /> : <Bot size={14} />}
       </div>
 
       <div className={`relative max-w-[85%] rounded-xl px-4 py-3 ${
         isUser ? 'bg-primary/10 border border-primary/20' :
         isSystem ? 'bg-red-500/10 border border-red-500/20' :
+        isSubAgentEvent ? 'bg-purple-900/20 border border-purple-500/30' :
         'bg-surface border border-white/5'
       }`}>
         <div className="absolute -top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity flex gap-1">

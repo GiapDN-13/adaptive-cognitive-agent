@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { History, MessageSquare, Trash2, X } from 'lucide-react'
-import { getSessionHistory, getHistoryMessages, type SessionHistoryItem } from '@/api/http'
+import { getSessionHistory, getHistoryMessages, deleteSession, type SessionHistoryItem } from '@/api/http'
 import { useChatStore } from '@/store/chatStore'
 
 interface Props {
@@ -13,14 +13,25 @@ export function SessionHistory({ open, onClose }: Props) {
   const [loading, setLoading] = useState(false)
   const { addMessage } = useChatStore()
 
-  useEffect(() => {
-    if (!open) return
+  const loadSessions = () => {
     setLoading(true)
     getSessionHistory().then((s) => {
       setSessions(s)
       setLoading(false)
     })
+  }
+
+  useEffect(() => {
+    if (!open) return
+    loadSessions()
   }, [open])
+
+  const handleDelete = async (e: React.MouseEvent, id: string) => {
+    e.stopPropagation()
+    if (!confirm('Are you sure you want to delete this session?')) return
+    await deleteSession(id)
+    loadSessions()
+  }
 
   const handleLoad = async (session: SessionHistoryItem) => {
     const messages = await getHistoryMessages(session.id)
@@ -62,19 +73,27 @@ export function SessionHistory({ open, onClose }: Props) {
           )}
 
           {sessions.map((s) => (
-            <button
-              key={s.id}
-              onClick={() => handleLoad(s)}
-              className="w-full text-left px-4 py-3 hover:bg-white/5 border-b border-white/5 transition"
-            >
-              <div className="flex items-center gap-2">
-                <MessageSquare size={14} className="text-gray-400 shrink-0" />
-                <span className="text-sm text-gray-200 truncate">{s.title}</span>
-              </div>
-              <span className="text-xs text-gray-500 mt-1 block">
-                {new Date(s.updated_at).toLocaleDateString()} {new Date(s.updated_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-              </span>
-            </button>
+            <div key={s.id} className="relative group">
+              <button
+                onClick={() => handleLoad(s)}
+                className="w-full text-left px-4 py-3 hover:bg-white/5 border-b border-white/5 transition"
+              >
+                <div className="flex items-center gap-2">
+                  <MessageSquare size={14} className="text-gray-400 shrink-0" />
+                  <span className="text-sm text-gray-200 truncate pr-8">{s.title}</span>
+                </div>
+                <span className="text-xs text-gray-500 mt-1 block">
+                  {new Date(s.updated_at).toLocaleDateString()} {new Date(s.updated_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                </span>
+              </button>
+              <button 
+                onClick={(e) => handleDelete(e, s.id)} 
+                className="absolute right-4 top-1/2 -translate-y-1/2 p-2 hover:text-red-400 text-gray-500 opacity-0 group-hover:opacity-100 transition"
+                title="Delete session"
+              >
+                <Trash2 size={16} />
+              </button>
+            </div>
           ))}
         </div>
       </div>
