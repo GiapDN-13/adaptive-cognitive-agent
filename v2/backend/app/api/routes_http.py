@@ -28,6 +28,7 @@ async def create_session(
         container_id=session.container_id,
         status=session.status,
         created_at=session.created_at,
+        app_port=session.app_port,
     )
 
 
@@ -44,6 +45,7 @@ async def get_session(
         container_id=session.container_id,
         status=session.status,
         created_at=session.created_at,
+        app_port=session.app_port,
     )
 
 
@@ -114,6 +116,36 @@ async def get_session_stats(
 
     stats = await dm.get_container_status(session.container_id)
     return stats
+
+
+@router.get("/sessions/{session_id}/app")
+async def get_app_status(
+    session_id: str,
+    sm: SessionManager = Depends(get_session_manager),
+    dm: DockerManager = Depends(get_docker_manager),
+):
+    """Check if a web app is listening on port 8080 inside the sandbox.
+    Returns the host URL the browser can open if the app is up."""
+    session = await sm.get(session_id)
+    if not session:
+        raise HTTPException(404, "Session not found")
+    if not session.container_id:
+        raise HTTPException(400, "Container not ready")
+
+    # Probe port 8080 inside the container
+    _, output = await dm.exec_command_simple(
+        session.container_id,
+        "(curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/ 2>/dev/null) || echo '000'",
+    )
+    code = output.strip()[-3:] if output.strip() else "000"
+    listening = code not in ("000", "")
+
+    return {
+        "listening": listening,
+        "http_code": code,
+        "app_port": session.app_port,
+        "url": f"http://localhost:{session.app_port}" if (listening and session.app_port) else None,
+    }
 
 
 @router.get("/sessions/{session_id}/tree")

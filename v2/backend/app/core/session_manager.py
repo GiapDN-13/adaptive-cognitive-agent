@@ -16,12 +16,13 @@ class SessionManager:
         session_id = uuid.uuid4().hex[:12]
         container_config = config or ContainerConfig(image=settings.sandbox_image)
 
-        container_id = await self._docker.create_container(session_id, container_config)
+        container_id, app_port = await self._docker.create_container(session_id, container_config)
 
         session = Session(
             id=session_id,
             container_id=container_id,
             container_config=container_config,
+            app_port=app_port,
         )
         self._sessions[session_id] = session
 

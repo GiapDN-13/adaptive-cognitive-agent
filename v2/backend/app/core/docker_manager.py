@@ -22,7 +22,10 @@ class DockerManager:
 
     async def create_container(
         self, session_id: str, config: ContainerConfig
-    ) -> str:
+    ) -> tuple[str, int | None]:
+        """Create a sandbox container. Publishes container port 8080 to a random
+        host port so apps the agent builds (e.g. a RAG web UI) are reachable from
+        the browser. Returns (container_id, host_port)."""
         def _create():
             container = self._client.containers.run(
                 image=config.image,
@@ -40,9 +43,19 @@ class DockerManager:
                         "mode": "rw",
                     }
                 },
+                # Publish container's 8080 → random free host port
+                ports={"8080/tcp": None},
                 labels={"smartagent.session": session_id},
             )
-            return container.id
+            container.reload()
+            host_port = None
+            try:
+                bindings = container.attrs["NetworkSettings"]["Ports"].get("8080/tcp")
+                if bindings:
+                    host_port = int(bindings[0]["HostPort"])
+            except (KeyError, IndexError, TypeError, ValueError):
+                host_port = None
+            return container.id, host_port
 
         return await asyncio.to_thread(_create)
 

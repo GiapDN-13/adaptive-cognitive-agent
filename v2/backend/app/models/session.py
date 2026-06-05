@@ -18,6 +18,7 @@ class Session(BaseModel):
     last_active: datetime = Field(default_factory=datetime.utcnow)
     messages: list[dict] = Field(default_factory=list)
     status: str = "active"
+    app_port: int | None = None  # host port mapped to sandbox 8080 (for agent-built web apps)
 
 
 class CreateSessionRequest(BaseModel):
@@ -29,3 +30,4 @@ class SessionResponse(BaseModel):
     container_id: str | None
     status: str
     created_at: datetime
+    app_port: int | None = None

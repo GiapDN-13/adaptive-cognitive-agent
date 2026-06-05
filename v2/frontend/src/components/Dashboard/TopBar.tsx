@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Play, Square, Loader2, Cpu, HardDrive, History, PanelRightOpen, PanelRightClose, Zap } from 'lucide-react'
+import { Play, Square, Loader2, Cpu, HardDrive, History, PanelRightOpen, PanelRightClose, Zap, ExternalLink } from 'lucide-react'
 import { useChatStore } from '@/store/chatStore'
 import { getSessionStats } from '@/api/http'
 
@@ -14,12 +14,21 @@ interface Props {
 export function TopBar({ onStart, onEnd, onHistoryOpen, onRightPanelToggle, rightPanelOpen }: Props) {
   const { containerStatus, sessionId, isAgentWorking, agentStatus } = useChatStore()
   const [stats, setStats] = useState({ cpu_percent: 0, memory_mb: 0 })
+  const [appUrl, setAppUrl] = useState<string | null>(null)
 
   useEffect(() => {
     if (!sessionId || containerStatus !== 'running') return
     const interval = setInterval(async () => {
       const s = await getSessionStats(sessionId)
       setStats({ cpu_percent: s.cpu_percent, memory_mb: s.memory_mb })
+      // Poll whether the agent has a web app listening on 8080
+      try {
+        const res = await fetch(`/api/sessions/${sessionId}/app`)
+        const data = await res.json()
+        setAppUrl(data.listening ? data.url : null)
+      } catch {
+        setAppUrl(null)
+      }
     }, 5000)
     return () => clearInterval(interval)
   }, [sessionId, containerStatus])
@@ -79,6 +88,17 @@ export function TopBar({ onStart, onEnd, onHistoryOpen, onRightPanelToggle, righ
 
       {/* Actions */}
       <div className={`flex items-center gap-1.5 ${containerStatus !== 'running' ? 'ml-auto' : ''}`}>
+        {appUrl && (
+          <a
+            href={appUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-green-500/15 hover:bg-green-500/25 text-green-400 text-xs font-medium transition animate-pulse"
+            title={`Open app running at ${appUrl}`}
+          >
+            <ExternalLink size={12} /> Open App
+          </a>
+        )}
         <button
           onClick={onHistoryOpen}
           className="p-1.5 hover:bg-white/[0.06] rounded-md transition text-gray-400 hover:text-gray-200"
