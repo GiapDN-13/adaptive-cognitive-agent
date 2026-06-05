@@ -121,7 +121,8 @@ async def handle_web_search(session, tool_input, ws_send, cancel_event) -> str:
         )
         tree = html.fromstring(resp.text)
 
-        results = []
+        results = []          # text blocks for LLM context
+        structured = []       # structured results for UI transparency
         for result in tree.xpath('//div[contains(@class, "result ")]'):
             title_elem = result.xpath('.//h2[@class="result__title"]/a')
             snippet_elem = result.xpath('.//a[@class="result__snippet"]')
@@ -138,13 +139,23 @@ async def handle_web_search(session, tool_input, ws_send, cancel_event) -> str:
                 link = qs.get('uddg', [link])[0]
 
             results.append(f"**{title}**\n{snippet}\nURL: {link}")
+            structured.append({"title": title, "url": link, "snippet": snippet[:200]})
             if len(results) >= 3:
                 break
+
+        # Emit retrieval transparency event — UI shows what was searched + found
+        await ws_send({
+            "type": "agent_retrieval",
+            "query": query,
+            "results": structured,
+            "count": len(structured),
+        })
 
         if not results:
             return "No results found."
         return "\n\n---\n\n".join(results)
     except Exception as e:
+        await ws_send({"type": "agent_retrieval", "query": query, "results": [], "count": 0, "error": str(e)})
         return f"Search error: {e}"
 
 

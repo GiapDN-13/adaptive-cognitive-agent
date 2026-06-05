@@ -1,6 +1,8 @@
 import { useEffect, useRef } from 'react'
 import { useChatStore } from '@/store/chatStore'
 import { MessageBubble } from './MessageBubble'
+import { RetrievalBlock } from './RetrievalBlock'
+import { ReasoningBlock } from './ReasoningBlock'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { Bot, WifiOff, RefreshCw, AlertTriangle } from 'lucide-react'
@@ -47,9 +49,15 @@ export function ChatContainer() {
         </div>
       )}
 
-      {messages.map((msg) => (
-        <MessageBubble key={msg.id} message={msg} />
-      ))}
+      {messages.map((msg) => {
+        if (msg.kind === 'retrieval' && msg.retrieval) {
+          return <RetrievalBlock key={msg.id} data={msg.retrieval} />
+        }
+        if (msg.kind === 'reasoning') {
+          return <ReasoningBlock key={msg.id} content={msg.content} />
+        }
+        return <MessageBubble key={msg.id} message={msg} />
+      })}
 
       {/* Thinking bubble */}
       {thinkingContent && (

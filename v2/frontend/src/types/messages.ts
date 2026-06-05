@@ -4,6 +4,22 @@ export interface Message {
   content: string
   timestamp: number
   metadata?: Record<string, unknown>
+  // Transparency blocks rendered inline in chat
+  kind?: 'normal' | 'reasoning' | 'retrieval' | 'critique'
+  retrieval?: RetrievalData
+}
+
+export interface RetrievalResult {
+  title: string
+  url: string
+  snippet: string
+}
+
+export interface RetrievalData {
+  query: string
+  results: RetrievalResult[]
+  count: number
+  error?: string
 }
 
 export interface TerminalEntry {
@@ -56,4 +72,6 @@ export type ServerMessage =
   | { type: 'agent_question'; question: string; options?: string[] }
   | { type: 'file_ready'; path: string; download_url: string; size_bytes: number }
   | { type: 'session_status'; container_status: string; session_id?: string }
+  | { type: 'agent_retrieval'; query: string; results: RetrievalResult[]; count: number; error?: string }
+  | { type: 'agent_critique'; finding: string; severity?: string; resolved?: boolean }
   | { type: 'error'; message: string; recoverable: boolean }

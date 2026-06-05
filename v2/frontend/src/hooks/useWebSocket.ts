@@ -19,6 +19,40 @@ export function useWebSocket() {
         break
       }
 
+      case 'agent_retrieval' as any: {
+        const m = msg as any
+        // finalize any in-flight stream so the block lands in order
+        if (useChatStore.getState().streamingContent) finalizeStream()
+        addMessage({
+          id: crypto.randomUUID(),
+          role: 'assistant',
+          content: '',
+          timestamp: Date.now(),
+          kind: 'retrieval',
+          retrieval: {
+            query: m.query || '',
+            results: m.results || [],
+            count: m.count || 0,
+            error: m.error,
+          },
+        })
+        break
+      }
+
+      case 'agent_critique' as any: {
+        const m = msg as any
+        if (useChatStore.getState().streamingContent) finalizeStream()
+        const icon = m.resolved ? '✅' : '❌'
+        addMessage({
+          id: crypto.randomUUID(),
+          role: 'assistant',
+          content: `${icon} **QA Review**: ${m.finding}`,
+          timestamp: Date.now(),
+          kind: 'critique',
+        })
+        break
+      }
+
       case 'agent_chunk':
         if (msg.done) {
           finalizeStream()

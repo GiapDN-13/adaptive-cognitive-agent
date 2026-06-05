@@ -81,7 +81,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
   finalizeThinking: () => {
     const { thinkingContent } = get()
     if (!thinkingContent) return
+    // Persist reasoning as an inline collapsible block in the chat
+    const reasoningMsg: Message = {
+      id: crypto.randomUUID(),
+      role: 'assistant',
+      content: thinkingContent,
+      timestamp: Date.now(),
+      kind: 'reasoning',
+    }
     set((s) => ({
+      messages: [...s.messages, reasoningMsg],
       thinkingHistory: [...s.thinkingHistory, thinkingContent],
       thinkingContent: '',
     }))
