@@ -544,7 +544,7 @@ async def _wait_for_approval(request_id: str, timeout: int = 600) -> dict:
         _pending_approvals.pop(request_id, None)
 
 
-async def _wait_for_user_response(session_id: str, timeout: int = 120) -> str:
+async def _wait_for_user_response(session_id: str, timeout: int = 600) -> str:
     event = asyncio.Event()
     _pending_responses[session_id] = event
     try:
