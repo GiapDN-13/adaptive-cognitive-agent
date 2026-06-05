@@ -239,6 +239,68 @@ async def handle_verify_work(session, tool_input, ws_send, cancel_event) -> str:
     )
 
 
+async def handle_spawn_critic(session, tool_input, ws_send, cancel_event) -> str:
+    """Spawn a dedicated Critic subagent that adversarially reviews a decision/design/claim.
+    Works for ANY domain — the critic auto-detects the domain and researches to verify."""
+    from app.agent.loop import _run_loop, _session_generation, _extract_text
+    from app.agent.prompts import build_critic_prompt
+    from app.agent.tool_registry import tool_registry
+
+    subject = tool_input.get("subject", "")        # what to critique
+    context = tool_input.get("context", "")        # requirement / constraints / numbers
+    claims = tool_input.get("claims", "")          # specific claims to verify
+
+    await ws_send({
+        "type": "agent_message",
+        "content": f"🔬 **Critic Agent** — phản biện: {subject[:80]}",
+        "metadata": None,
+    })
+
+    critic_task = (
+        f"## Đối tượng phản biện\n{subject}\n\n"
+        f"## Bối cảnh / Yêu cầu (con số cụ thể)\n{context}\n\n"
+    )
+    if claims:
+        critic_task += f"## Các claim cần kiểm chứng\n{claims}\n\n"
+    critic_task += (
+        "Hãy phản biện nghiêm khắc. Với MỖI claim/lựa chọn: research (web_search) để verify, "
+        "đưa verdict VALID / QUESTIONABLE / WRONG kèm bằng chứng và đề xuất sửa. "
+        "Kết thúc bằng tổng kết: những gì cần thay đổi TRƯỚC khi triển khai."
+    )
+
+    critic_prompt = build_critic_prompt()
+    critic_tools = tool_registry.get_tool_specs(is_subagent=True)
+    sub_messages = [{"role": "user", "content": [{"text": critic_task}]}]
+
+    await _run_loop(
+        session=session,
+        messages=sub_messages,
+        system_prompt=critic_prompt,
+        tools_list=critic_tools,
+        ws_send=ws_send,
+        gen=_session_generation.get(session.id, 0),
+        cancel_event=cancel_event,
+        is_subagent=True,
+    )
+
+    verdict = "(no critique)"
+    if sub_messages and sub_messages[-1].get("role") == "assistant":
+        verdict = _extract_text(sub_messages[-1].get("content", []))
+
+    # Emit structured critique event for UI
+    await ws_send({
+        "type": "agent_critique",
+        "finding": f"Critic review: {subject[:100]}",
+        "resolved": False,
+    })
+    await ws_send({
+        "type": "agent_message",
+        "content": f"🔬 **Critic hoàn thành**. Áp dụng phản biện vào thiết kế trước khi build.",
+        "metadata": None,
+    })
+    return f"CRITIC REVIEW of '{subject}':\n{verdict}\n\n[Hãy SỬA thiết kế theo phản biện trên TRƯỚC khi tiếp tục build.]"
+
+
 async def handle_ask_user(session, tool_input, ws_send, cancel_event) -> str:
     question = tool_input.get("question", "")
     options = tool_input.get("options")
@@ -559,6 +621,24 @@ def register_all_builtins(registry) -> None:
         },
     }
     registry.register("verify_work", verify_spec, handle_verify_work, builtin=True, category="meta")
+
+    # spawn_critic — dedicated adversarial reviewer (any domain)
+    critic_spec = {
+        "name": "spawn_critic",
+        "description": "Spawn a dedicated Critic agent to adversarially review an important decision, design, or technical claim BEFORE you commit to it. Works for ANY domain (web/infra/pentest/ML/data/security). The critic auto-detects the domain, researches to verify each claim, and returns VALID/QUESTIONABLE/WRONG verdicts with evidence. USE THIS before finalizing architecture/tech choices or any claim you cannot back with evidence.",
+        "inputSchema": {
+            "json": {
+                "type": "object",
+                "properties": {
+                    "subject": {"type": "string", "description": "What to critique (e.g. 'choice of ChromaDB as vector DB', 'this RCE payload approach', 'using pandas for 10GB dataset')"},
+                    "context": {"type": "string", "description": "Requirements with concrete numbers/constraints (e.g. '1000 concurrent users', '10GB data', 'target behind Cloudflare WAF')"},
+                    "claims": {"type": "string", "description": "Specific claims to verify (e.g. 'ChromaDB scales to 1k users', 'this payload bypasses WAF')"},
+                },
+                "required": ["subject", "context"],
+            }
+        },
+    }
+    registry.register("spawn_critic", critic_spec, handle_spawn_critic, builtin=True, category="meta")
 
     # spawn_subagent — special: only for main agent
     spawn_spec = {

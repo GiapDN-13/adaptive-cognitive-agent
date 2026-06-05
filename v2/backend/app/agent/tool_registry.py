@@ -61,7 +61,10 @@ class ToolRegistry:
     def get_tool_specs(self, is_subagent: bool = False) -> list[dict]:
         specs = []
         for entry in self._tools.values():
-            if is_subagent and entry.name in ("spawn_subagent", "create_tool", "create_skill", "create_hook"):
+            # Subagents (incl. critic) cannot spawn more agents (no recursion) or
+            # create runtime tools/hooks (risky). create_skill IS allowed — it only
+            # writes markdown, and the Critic uses it to persist domain checklists.
+            if is_subagent and entry.name in ("spawn_subagent", "spawn_critic", "create_tool", "create_hook"):
                 continue
             specs.append({"toolSpec": entry.schema})
         return specs
