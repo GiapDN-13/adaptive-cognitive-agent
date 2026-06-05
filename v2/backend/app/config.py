@@ -11,6 +11,9 @@ class Settings(BaseSettings):
     aws_region: str = "us-east-1"
     bedrock_light_model: str = "us.anthropic.claude-sonnet-4-6-v1"
     bedrock_heavy_model: str = "us.anthropic.claude-opus-4-6-v1"
+    # Model routing: route heavy one-shot reasoning to Opus. Off by default
+    # because Opus is much slower and caused timeouts when used per-turn.
+    enable_model_routing: bool = False
 
     # Gemini fallback
     google_api_key: str = ""

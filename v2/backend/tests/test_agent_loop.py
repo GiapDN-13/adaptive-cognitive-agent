@@ -184,12 +184,24 @@ async def test_unknown_tool_returns_error(isolated_registry, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_select_model_routes_heavy_on_signal(monkeypatch):
-    """_select_model should pick the heavy model when complexity signals present."""
+async def test_select_model_off_by_default(monkeypatch):
+    """Model routing is opt-in; default returns None (fast light model)."""
     from app.config import settings
+    monkeypatch.setattr(settings, "enable_model_routing", False, raising=False)
     monkeypatch.setattr(settings, "bedrock_heavy_model", "us.anthropic.claude-opus-4-7", raising=False)
 
-    heavy_msgs = [{"role": "user", "content": [{"text": "Please synthesize a comprehensive root cause report"}]}]
+    msgs = [{"role": "user", "content": [{"text": "synthesize final comprehensive final report"}]}]
+    assert agent_loop._select_model(msgs) is None
+
+
+@pytest.mark.asyncio
+async def test_select_model_routes_heavy_when_enabled(monkeypatch):
+    """When routing enabled, narrow heavy signals in the LAST message pick Opus."""
+    from app.config import settings
+    monkeypatch.setattr(settings, "enable_model_routing", True, raising=False)
+    monkeypatch.setattr(settings, "bedrock_heavy_model", "us.anthropic.claude-opus-4-7", raising=False)
+
+    heavy_msgs = [{"role": "user", "content": [{"text": "Now synthesize final comprehensive final report"}]}]
     assert agent_loop._select_model(heavy_msgs) == "us.anthropic.claude-opus-4-7"
 
     light_msgs = [{"role": "user", "content": [{"text": "ls the directory"}]}]

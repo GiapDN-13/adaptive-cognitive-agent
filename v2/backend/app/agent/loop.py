@@ -430,25 +430,27 @@ def _select_model(messages: list[dict]) -> str | None:
     will likely synthesize a large report, benefits from the heavy model.
     Returns None to use the client default (light) model.
     """
+    # Model routing is OPT-IN and disabled by default. The heavy model (Opus)
+    # is significantly slower; routing to it on every turn caused multi-minute
+    # latency and timeouts. Only enable when explicitly turned on via settings,
+    # and only for the most recent user instruction (not accumulated context).
+    if not getattr(settings, "enable_model_routing", False):
+        return None
+
     heavy = getattr(settings, "bedrock_heavy_model", "")
     if not heavy:
         return None
 
-    # Look at the most recent user/tool-result content for routing signals.
-    recent_text = ""
-    for m in messages[-3:]:
-        content = m.get("content", "")
-        recent_text += str(content).lower()
+    # Only inspect the LAST message (current instruction), not history —
+    # otherwise early-turn keywords keep forcing the heavy model forever.
+    last = messages[-1] if messages else {}
+    recent_text = str(last.get("content", "")).lower()
 
-    # Heavy-model triggers: tool creation, synthesis, final report, deep analysis
-    heavy_signals = [
-        "create_tool", "create a tool", "synthesize", "tổng hợp", "báo cáo",
-        "final report", "comprehensive", "root cause", "exploit", "vulnerability",
-        "adversarial", "definition of done",
-    ]
+    # Narrow triggers: only genuinely heavy one-shot reasoning tasks.
+    heavy_signals = ["synthesize final", "comprehensive final report", "deep root cause analysis"]
     if any(sig in recent_text for sig in heavy_signals):
         return heavy
-    return None  # default light model
+    return None  # default: fast light model (Sonnet)
 
 
 async def _call_llm(messages: list[dict], system_prompt: str, tools_list: list, ws_send: Callable = None, cancel_event: threading.Event | None = None, temperature: float = 0.4) -> dict:
