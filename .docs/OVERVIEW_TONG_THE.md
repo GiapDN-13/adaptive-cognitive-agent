@@ -132,7 +132,7 @@ SmartAgent là nền tảng **AI Agent tự chủ và tự mở rộng**, có kh
 | **Sandbox** | Mỗi session = 1 Docker container riêng, cô lập file system |
 | **AST Validation** | Code runtime tools được kiểm tra: chặn `os`, `subprocess`, `eval`, `exec` |
 | **Import whitelist** | Runtime tools chỉ dùng: json, re, csv, hashlib, datetime... |
-| **Secret protection** | `.env` trong .gitignore, không commit credentials |
+| **Secret protection** | `.env` trong .gitignore. ⚠️ Lưu ý: hiện còn fallback key hardcoded trong `config.py` — chấp nhận được cho dùng nội bộ, cần xóa nếu public repo |
 | **Approval gate** | Lệnh nguy hiểm (pip install, rm) yêu cầu phê duyệt |
 
 ---
