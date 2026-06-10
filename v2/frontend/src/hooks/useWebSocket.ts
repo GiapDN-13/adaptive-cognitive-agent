@@ -64,11 +64,24 @@ export function useWebSocket() {
 
       case 'agent_message': {
         const state = useChatStore.getState()
+        const content = (msg.content || '').trim()
         if (state.streamingContent) {
           finalizeStream()
-        } else {
-          const lastMsg = state.messages[state.messages.length - 1]
-          const isDuplicate = lastMsg?.role === 'assistant' && lastMsg.content === msg.content
+          // If the final message merely repeats what we just streamed, drop it.
+          const lastMsg = useChatStore.getState().messages[useChatStore.getState().messages.length - 1]
+          if (content && lastMsg?.content?.trim() !== content) {
+            const dup = useChatStore.getState().messages.slice(-3).some(
+              (m) => m.role === 'assistant' && m.content?.trim() === content
+            )
+            if (!dup) {
+              addMessage({ id: crypto.randomUUID(), role: 'assistant', content: msg.content, timestamp: Date.now(), metadata: msg.metadata })
+            }
+          }
+        } else if (content) {
+          // Dedup against the last 3 assistant messages, not just the very last one.
+          const isDuplicate = state.messages.slice(-3).some(
+            (m) => m.role === 'assistant' && m.content?.trim() === content
+          )
           if (!isDuplicate) {
             addMessage({
               id: crypto.randomUUID(),
@@ -156,9 +169,11 @@ export function useWebSocket() {
       }
 
       case 'agent_heartbeat' as any: {
-        const { setAgentStatus } = useChatStore.getState()
-        const elapsed = (msg as any).elapsed_since_last_chunk || 0
-        setAgentStatus(`Thinking... (${elapsed}s)`)
+        // Heartbeat is a keepalive, NOT an activity. Update the elapsed counter only —
+        // never touch agentStatus, otherwise the Activity timeline floods with one
+        // "Thinking... (Xs)" entry every 8 seconds.
+        const { setAgentElapsed } = useChatStore.getState()
+        setAgentElapsed((msg as any).elapsed_since_last_chunk || 0)
         break
       }
 

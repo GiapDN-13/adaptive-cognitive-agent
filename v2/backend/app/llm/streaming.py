@@ -11,7 +11,7 @@ async def stream_agent_response(
     tools: list[dict],
     ws_send: Callable,
     temperature: float = 0.4,
-    max_tokens: int = 64000,
+    max_tokens: int | None = None,
     cancel_event: threading.Event | None = None,
     model: str | None = None,
 ) -> dict:

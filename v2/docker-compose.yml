@@ -9,6 +9,8 @@ services:
       - LLM_PROVIDER=${LLM_PROVIDER:-cursor}
       - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
       - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      # Passed through for temporary/STS credentials (access keys starting with ASIA).
+      - AWS_SESSION_TOKEN=${AWS_SESSION_TOKEN}
       - AWS_REGION=us-east-1
       - BEDROCK_LIGHT_MODEL=${BEDROCK_LIGHT_MODEL:-us.anthropic.claude-sonnet-4-6-v1}
       - BEDROCK_HEAVY_MODEL=${BEDROCK_HEAVY_MODEL:-us.anthropic.claude-opus-4-6-v1}

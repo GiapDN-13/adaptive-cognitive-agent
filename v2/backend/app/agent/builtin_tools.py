@@ -239,6 +239,120 @@ async def handle_verify_work(session, tool_input, ws_send, cancel_event) -> str:
     )
 
 
+async def handle_verify_webapp(session, tool_input, ws_send, cancel_event) -> str:
+    """Prove a running web app is genuinely USABLE by issuing real HTTP requests
+    against localhost:8080 INSIDE the container and asserting on the RESPONSE BODY
+    (not just status 200). Ported from Nexus dev_server._wait_for_ready pattern.
+
+    A blank-200 page or a server that returns errors on real user input will FAIL,
+    which is exactly the "has a UI but doesn't work" failure mode we must catch.
+    """
+    import json as _json
+    from app.agent.tools import truncate_output
+    from app.deps import _docker_manager
+
+    base_url = tool_input.get("app_url", "http://localhost:8080").rstrip("/")
+    journey = tool_input.get("journey", [])
+    if isinstance(journey, str):
+        try:
+            journey = _json.loads(journey)
+        except Exception:
+            return "VERIFY_WEBAPP: 'journey' must be a JSON array of steps. Got an unparseable string."
+    if not isinstance(journey, list) or not journey:
+        return (
+            "VERIFY_WEBAPP: provide a non-empty 'journey' (list of steps). Each step: "
+            "{name, method?, path?, body?, assert_status?, assert_contains?, assert_not_contains?}. "
+            "Include at least one real user action and assert on the RESPONSE BODY, not just status."
+        )
+
+    await ws_send({"type": "agent_status", "tool": "verify_webapp", "detail": f"E2E {len(journey)} steps @ {base_url}"})
+
+    def _shq(s: str) -> str:
+        # safe single-quote for shell
+        return "'" + str(s).replace("'", "'\\''") + "'"
+
+    results = []
+    all_pass = True
+    for i, step in enumerate(journey):
+        if not isinstance(step, dict):
+            results.append(f"[step {i}] SKIP — not an object")
+            all_pass = False
+            continue
+        name = step.get("name", f"step {i}")
+        method = (step.get("method") or "GET").upper()
+        path = step.get("path", "/")
+        url = base_url + ("" if path.startswith("/") else "/") + path
+        body = step.get("body")
+
+        # Build curl: print body, then a marker + HTTP status on its own line.
+        curl = f"curl -s -m 15 -X {method} {_shq(url)}"
+        if body is not None:
+            payload = body if isinstance(body, str) else _json.dumps(body, ensure_ascii=False)
+            curl += f" -H 'Content-Type: application/json' -d {_shq(payload)}"
+        curl += " -w '\\n__HTTP_STATUS__:%{http_code}'"
+
+        try:
+            output_parts = []
+            async for chunk in _docker_manager.exec_command(session.container_id, curl):
+                _, content = chunk.split(":", 1)
+                output_parts.append(content)
+            raw = "".join(output_parts)
+        except Exception as e:
+            results.append(f"[{name}] FAIL — curl error: {e}")
+            all_pass = False
+            continue
+
+        # Split body vs status marker
+        status_code = ""
+        body_text = raw
+        if "__HTTP_STATUS__:" in raw:
+            body_text, _, status_part = raw.rpartition("__HTTP_STATUS__:")
+            status_code = status_part.strip()
+
+        step_pass = True
+        reasons = []
+
+        # Server not listening / no HTTP response
+        if status_code in ("", "000"):
+            step_pass = False
+            reasons.append("app not responding (status 000 — server not listening?)")
+
+        exp_status = step.get("assert_status")
+        if exp_status is not None and str(exp_status) != status_code:
+            step_pass = False
+            reasons.append(f"status {status_code} != expected {exp_status}")
+
+        ac = step.get("assert_contains")
+        if ac:
+            for needle in ([ac] if isinstance(ac, str) else ac):
+                if needle not in body_text:
+                    step_pass = False
+                    reasons.append(f"body missing expected text: {needle!r}")
+
+        anc = step.get("assert_not_contains")
+        if anc:
+            for needle in ([anc] if isinstance(anc, str) else anc):
+                if needle in body_text:
+                    step_pass = False
+                    reasons.append(f"body contains forbidden text: {needle!r}")
+
+        all_pass = all_pass and step_pass
+        body_preview = body_text.strip()[:300].replace("\n", " ")
+        verdict = "PASS" if step_pass else "FAIL"
+        detail = "ok" if step_pass else "; ".join(reasons)
+        results.append(f"[{name}] {verdict} (HTTP {status_code or 'n/a'}) — {detail}\n    body: {body_preview}")
+
+    summary = "\n".join(results)
+    overall = "PASS" if all_pass else "FAIL"
+    return (
+        f"VERIFY_WEBAPP: {overall} ({sum('] PASS' in r for r in results)}/{len(journey)} steps passed)\n"
+        f"{summary}\n"
+        f"NOTE: This asserts on the actual RESPONSE BODY + user journey. "
+        f"If FAIL, the app is NOT genuinely usable yet — fix the real defect (use systematic-debugging skill) and re-verify. "
+        f"Do NOT report the app as done until verify_webapp PASSES."
+    )
+
+
 async def handle_spawn_critic(session, tool_input, ws_send, cancel_event) -> str:
     """Spawn a dedicated Critic subagent that adversarially reviews a decision/design/claim.
     Works for ANY domain — the critic auto-detects the domain and researches to verify."""
@@ -621,6 +735,47 @@ def register_all_builtins(registry) -> None:
         },
     }
     registry.register("verify_work", verify_spec, handle_verify_work, builtin=True, category="meta")
+
+    # verify_webapp — prove a running web app is genuinely usable (real HTTP, assert body)
+    verify_webapp_spec = {
+        "name": "verify_webapp",
+        "description": (
+            "Prove a web app you built is GENUINELY USABLE — not just returning HTTP 200. "
+            "Issues real HTTP requests to the running app (default http://localhost:8080) INSIDE the "
+            "container and asserts on the RESPONSE BODY + a real user journey. MANDATORY after building "
+            "any web app/API/chatbot UI, BEFORE reporting it done. A blank-200 page or a server that errors "
+            "on real input will FAIL. Design the journey to exercise real user actions: e.g. GET / must "
+            "contain the app's UI markup; POST /chat with an in-scope question must return a grounded answer "
+            "containing a fact from the data; an out-of-scope question must return a refusal and NOT a fabricated fact."
+        ),
+        "inputSchema": {
+            "json": {
+                "type": "object",
+                "properties": {
+                    "app_url": {"type": "string", "description": "Base URL of the running app (default http://localhost:8080)"},
+                    "journey": {
+                        "type": "array",
+                        "description": "Ordered list of user-journey steps to assert.",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "name": {"type": "string", "description": "Human label for this step"},
+                                "method": {"type": "string", "description": "HTTP method (GET/POST/...). Default GET"},
+                                "path": {"type": "string", "description": "Path, e.g. '/' or '/chat'. Default '/'"},
+                                "body": {"description": "Optional request body (object → sent as JSON, or raw string)"},
+                                "assert_status": {"type": "integer", "description": "Optional expected HTTP status code"},
+                                "assert_contains": {"description": "String or list of strings that MUST appear in the response body"},
+                                "assert_not_contains": {"description": "String or list of strings that must NOT appear (e.g. a hallucinated fact)"},
+                            },
+                            "required": ["name"],
+                        },
+                    },
+                },
+                "required": ["journey"],
+            }
+        },
+    }
+    registry.register("verify_webapp", verify_webapp_spec, handle_verify_webapp, builtin=True, category="meta")
 
     # spawn_critic — dedicated adversarial reviewer (any domain)
     critic_spec = {

@@ -9,6 +9,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 RUN pip install --no-cache-dir uv
 
+# Reliable dependency installation (general — not RAG-specific).
+# Longer timeout + more retries so the agent can install ANY library it
+# researches as correct, without flaky-network timeouts pushing it to take
+# shortcuts (a root cause of weak solutions). The pip cache dir is mounted
+# as a shared volume at runtime (see docker_manager.create_container) so a
+# second install of the same package is near-instant instead of re-downloading.
+ENV PIP_DEFAULT_TIMEOUT=120 \
+    PIP_RETRIES=6 \
+    PIP_CACHE_DIR=/root/.cache/pip \
+    UV_HTTP_TIMEOUT=120
+
 WORKDIR /workspace
 
 CMD ["bash"]

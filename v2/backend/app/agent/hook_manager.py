@@ -406,6 +406,8 @@ def _session_has_called(session_id: str, tool_names: set[str]) -> bool:
 def clear_session_history(session_id: str):
     """Cleanup when session is destroyed."""
     _session_tool_history.pop(session_id, None)
+    # Defined later in this module; guard in case of import ordering.
+    globals().get("_heavy_dep_warned", {}).pop(session_id, None)
 
 
 RESEARCH_TOOLS = {"web_search", "read_file", "shell_exec", "think", "load_skill", "load_agent"}
@@ -468,11 +470,104 @@ async def planning_loop_post_hook(
     return result
 
 
+# Heavy deps that pull large native runtimes (torch etc.) — risky on a small
+# RAM budget. Maps a pip package name → approximate resident footprint hint.
+_HEAVY_DEPS = {
+    "torch": "PyTorch ~800MB-2GB resident",
+    "tensorflow": "TensorFlow ~1GB+ resident",
+    "sentence-transformers": "pulls in PyTorch ~800MB-2GB",
+    "transformers": "pulls in PyTorch/TF, hundreds of MB+",
+    "spacy": "language models ~hundreds of MB",
+    "faiss-gpu": "GPU build, large",
+    "vllm": "very large, multi-GB",
+    "unstructured": "heavy parsing stack, hundreds of MB",
+}
+# Lighter alternatives to suggest, so the nudge is actionable (not just "no").
+_LIGHT_ALTERNATIVES = (
+    "For semantic search under tight RAM: use an EMBEDDING API (OpenAI/Bedrock/Gemini) "
+    "so no model loads locally; or ONNX-based `fastembed` (far lighter than torch); or "
+    "lexical retrieval (`rank-bm25` / TF-IDF via scikit-learn) — no model at all. "
+    "Vector store: `faiss-cpu` or numpy cosine is fine; it's the EMBEDDING runtime that blows RAM."
+)
+
+
+def _session_mem_mb(session_id: str) -> int | None:
+    """Best-effort: read the container RAM budget (MB) for this session.
+    Returns None if unknown. Keeps the hook decoupled from the loop."""
+    try:
+        from app.deps import _session_manager
+        if _session_manager is None:
+            return None
+        # NOTE: SessionManager.get() is async; we only need a sync dict lookup here
+        # (a pre-hook is sync). Read the backing _sessions dict directly to avoid
+        # returning an un-awaited coroutine (which silently broke the RAM guard).
+        session = _session_manager._sessions.get(session_id)
+        if not session or not getattr(session, "container_config", None):
+            return None
+        ml = str(session.container_config.mem_limit).strip().lower()
+        if ml.endswith("g"):
+            return int(float(ml[:-1]) * 1024)
+        if ml.endswith("m"):
+            return int(float(ml[:-1]))
+        return None
+    except Exception:
+        return None
+
+
+# Track which (session, package) heavy-dep warnings we've already shown, so the
+# agent can override by simply re-issuing the command (fail-closed but recoverable).
+_heavy_dep_warned: dict[str, set] = {}
+
+
+async def heavy_dep_ram_guard_pre_hook(
+    tool_name: str, tool_input: dict, session_id: str
+) -> tuple[bool, str | None]:
+    """Soft-block installing a heavy dependency when the RAM budget is small.
+
+    This closes G1: the agent often CORRECTLY analyzes that e.g. sentence-transformers
+    is too heavy for 512MB, then installs it anyway. This makes that contradiction
+    mechanical: first attempt is blocked with the footprint + lighter alternatives;
+    if the agent still means it, re-issuing the SAME install proceeds (preserves freedom).
+    """
+    if tool_name != "shell_exec":
+        return True, None
+    command = tool_input.get("command", "")
+    if "pip install" not in command and "pip3 install" not in command and "uv pip install" not in command:
+        return True, None
+
+    mem_mb = _session_mem_mb(session_id)
+    # Only guard when RAM is genuinely tight (<= 1GB). Unknown budget → don't block.
+    if mem_mb is None or mem_mb > 1024:
+        return True, None
+
+    cmd_lower = command.lower()
+    hit = next((dep for dep in _HEAVY_DEPS if dep in cmd_lower), None)
+    if not hit:
+        return True, None
+
+    warned = _heavy_dep_warned.setdefault(session_id, set())
+    if hit in warned:
+        # Agent insists — let it through (it owns the decision).
+        return True, None
+    warned.add(hit)
+
+    return False, (
+        f"🧠 RAM-Budget Guard: You're installing '{hit}' ({_HEAVY_DEPS[hit]}) but this "
+        f"container has only ~{mem_mb}MB RAM. This will likely OOM or hang during install/load — "
+        f"and is probably the exact thing your own analysis flagged as too heavy.\n"
+        f"→ {_LIGHT_ALTERNATIVES}\n"
+        f"Revisit your DECISION-COMMITMENT table (research-first-design skill): pick something in the "
+        f"RAM budget. If you have a concrete reason '{hit}' fits anyway, re-issue the same install "
+        f"command to proceed — but make the reasoning explicit first."
+    )
+
+
 # ===========================================================================
 # Register all built-in hooks
 # ===========================================================================
 
 hook_manager.register_pre_hook(dangerous_command_pre_hook)
+hook_manager.register_pre_hook(heavy_dep_ram_guard_pre_hook)
 hook_manager.register_pre_hook(config_protection_pre_hook)
 hook_manager.register_pre_hook(secret_detection_pre_hook)
 hook_manager.register_pre_hook(gateguard_pre_hook)

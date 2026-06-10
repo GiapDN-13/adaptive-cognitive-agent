@@ -17,8 +17,14 @@ Progressive disclosure:
 import re
 from pathlib import Path
 
-# vendor/ecc/skills/ is three levels up from app/agent/ → backend root, then vendor/ecc/skills
-SKILLS_DIR = Path(__file__).parent.parent.parent / "vendor" / "ecc" / "skills"
+# Skills are discovered from two roots, in priority order:
+#  1. LOCAL_SKILLS_DIR — SmartAgent's own skills (tracked in this repo, owned by us).
+#  2. VENDOR_SKILLS_DIR — bundled ECC skills (vendor/ecc is a separate embedded repo).
+# Local skills win on id collisions so our curated versions override vendor ones.
+LOCAL_SKILLS_DIR = Path(__file__).parent / "skills"
+VENDOR_SKILLS_DIR = Path(__file__).parent.parent.parent / "vendor" / "ecc" / "skills"
+# Back-compat alias (some code/tests referenced SKILLS_DIR).
+SKILLS_DIR = VENDOR_SKILLS_DIR
 
 
 def _parse_frontmatter(text: str) -> dict:
@@ -42,35 +48,39 @@ class SkillManager:
         self.skills: dict[str, dict] = self._discover_skills()
 
     def _discover_skills(self) -> dict:
-        """Scan SKILLS_DIR and load just name+description of each skill."""
+        """Scan vendor + local skill roots; load just name+description of each skill.
+
+        Vendor first, then local — so local (SmartAgent's own) skills override any
+        vendor skill with the same id.
+        """
         skills = {}
-        if not SKILLS_DIR.exists():
-            return skills
-
-        for skill_dir in sorted(SKILLS_DIR.iterdir()):
-            if not skill_dir.is_dir():
+        for root in (VENDOR_SKILLS_DIR, LOCAL_SKILLS_DIR):
+            if not root.exists():
                 continue
+            for skill_dir in sorted(root.iterdir()):
+                if not skill_dir.is_dir():
+                    continue
 
-            skill_file = skill_dir / "SKILL.md"
-            if not skill_file.exists():
-                continue
+                skill_file = skill_dir / "SKILL.md"
+                if not skill_file.exists():
+                    continue
 
-            try:
-                with open(skill_file, "r", encoding="utf-8") as f:
-                    content = f.read()
-            except Exception:
-                continue
+                try:
+                    with open(skill_file, "r", encoding="utf-8") as f:
+                        content = f.read()
+                except Exception:
+                    continue
 
-            fm = _parse_frontmatter(content)
-            name = fm.get("name", skill_dir.name)
-            desc = fm.get("description", "No description")
+                fm = _parse_frontmatter(content)
+                name = fm.get("name", skill_dir.name)
+                desc = fm.get("description", "No description")
 
-            skills[skill_dir.name] = {
-                "id": skill_dir.name,
-                "name": name,
-                "description": desc,
-                "path": str(skill_file),
-            }
+                skills[skill_dir.name] = {
+                    "id": skill_dir.name,
+                    "name": name,
+                    "description": desc,
+                    "path": str(skill_file),
+                }
 
         return skills
 
@@ -83,8 +93,11 @@ class SkillManager:
         if not self.skills:
             return ""
 
-        # Priority skills that are most commonly useful
+        # Priority skills that are most commonly useful.
+        # The first three are SmartAgent's core discipline skills (ported from Nexus):
+        # research before building, debug before rewriting, clean usable UI.
         priority_skill_ids = [
+            "research-first-design", "systematic-debugging", "ui-blueprint",
             "search-first", "verification-loop", "tdd-workflow", "security-review",
             "code-review", "backend-patterns", "python-patterns", "django-patterns",
             "fastapi-patterns", "api-design", "database-patterns", "docker-patterns",

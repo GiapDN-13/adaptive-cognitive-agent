@@ -41,7 +41,14 @@ class DockerManager:
                     f"smartagent-uploads-{session_id}": {
                         "bind": "/uploads",
                         "mode": "rw",
-                    }
+                    },
+                    # Shared pip cache across ALL sessions — a second install of the
+                    # same package is near-instant (no re-download), removing a major
+                    # source of pip timeouts that pushed the agent toward shortcuts.
+                    "smartagent-pip-cache": {
+                        "bind": "/root/.cache/pip",
+                        "mode": "rw",
+                    },
                 },
                 # Publish container's 8080 → random free host port
                 ports={"8080/tcp": None},

@@ -37,13 +37,24 @@ class BedrockClient:
         import boto3
         from botocore.config import Config
 
-        self._client = boto3.client(
-            "bedrock-runtime",
+        # Pass session token only if present (required for STS/temporary creds,
+        # which start with ASIA). Permanent keys (AKIA) leave it empty.
+        client_kwargs = dict(
             aws_access_key_id=settings.aws_access_key_id,
             aws_secret_access_key=settings.aws_secret_access_key,
             region_name=settings.aws_region,
-            config=Config(read_timeout=120, connect_timeout=10),
+            # adaptive retry mode adds exponential backoff + client-side throttling
+            # so transient ThrottlingException/5xx are retried instead of bubbling up.
+            config=Config(
+                read_timeout=120,
+                connect_timeout=10,
+                retries={"max_attempts": 4, "mode": "adaptive"},
+            ),
         )
+        if settings.aws_session_token:
+            client_kwargs["aws_session_token"] = settings.aws_session_token
+
+        self._client = boto3.client("bedrock-runtime", **client_kwargs)
 
     async def converse(
         self,
@@ -51,9 +62,10 @@ class BedrockClient:
         system: str,
         tools: list[dict] | None = None,
         temperature: float = 0.4,
-        max_tokens: int = 64000,
+        max_tokens: int | None = None,
         model: str | None = None,
     ) -> dict:
+        max_tokens = max_tokens or settings.bedrock_max_tokens
         model_id = model or settings.bedrock_light_model
         kwargs = {
             "modelId": model_id,
@@ -73,10 +85,11 @@ class BedrockClient:
         system: str,
         tools: list[dict] | None = None,
         temperature: float = 0.4,
-        max_tokens: int = 64000,
+        max_tokens: int | None = None,
         cancel_event: threading.Event | None = None,
         model: str | None = None,
     ) -> AsyncGenerator[dict, None]:
+        max_tokens = max_tokens or settings.bedrock_max_tokens
         model_id = model or settings.bedrock_light_model
         kwargs = {
             "modelId": model_id,
@@ -125,11 +138,12 @@ class BedrockClient:
         system: str,
         tools: list[dict] | None = None,
         temperature: float = 0.4,
-        max_tokens: int = 64000,
+        max_tokens: int | None = None,
         on_text_chunk: callable = None,
         cancel_event: threading.Event | None = None,
         model: str | None = None,
     ) -> dict:
+        max_tokens = max_tokens or settings.bedrock_max_tokens
         content_blocks = []
         current_text = ""
         current_tool_use = None

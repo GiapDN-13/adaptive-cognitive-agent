@@ -15,6 +15,7 @@ interface ChatState {
   pendingQuestion: AgentQuestion | null
   isAgentWorking: boolean
   agentStatus: string | null
+  agentElapsed: number | null
   connectionStatus: 'connected' | 'reconnecting' | 'disconnected' | 'error'
   connectionDetail: string | null
 
@@ -34,6 +35,7 @@ interface ChatState {
   setPendingQuestion: (q: AgentQuestion | null) => void
   setAgentWorking: (working: boolean) => void
   setAgentStatus: (status: string | null) => void
+  setAgentElapsed: (seconds: number | null) => void
   setConnectionStatus: (status: ChatState['connectionStatus'], detail?: string | null) => void
   reset: () => void
 }
@@ -52,6 +54,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   pendingQuestion: null,
   isAgentWorking: false,
   agentStatus: null,
+  agentElapsed: null,
   connectionStatus: 'connected',
   connectionDetail: null,
 
@@ -66,7 +69,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   finalizeStream: () => {
     const { streamingContent } = get()
-    if (!streamingContent) return
+    // Skip whitespace-only streams — they create empty status bubbles that clutter chat.
+    if (!streamingContent.trim()) {
+      if (streamingContent) set({ streamingContent: '' })
+      return
+    }
     const msg: Message = {
       id: crypto.randomUUID(),
       role: 'assistant',
@@ -120,8 +127,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
     return { activePlan: { ...s.activePlan, steps } }
   }),
   setPendingQuestion: (q) => set({ pendingQuestion: q }),
-  setAgentWorking: (working) => set({ isAgentWorking: working, ...(working ? {} : { agentStatus: null }) }),
+  setAgentWorking: (working) => set({ isAgentWorking: working, ...(working ? {} : { agentStatus: null, agentElapsed: null }) }),
   setAgentStatus: (status) => set({ agentStatus: status }),
+  setAgentElapsed: (seconds) => set({ agentElapsed: seconds }),
   setConnectionStatus: (status, detail = null) => set({ connectionStatus: status, connectionDetail: detail }),
 
   reset: () => set({
@@ -138,6 +146,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     pendingQuestion: null,
     isAgentWorking: false,
     agentStatus: null,
+    agentElapsed: null,
     connectionStatus: 'connected',
     connectionDetail: null,
   }),

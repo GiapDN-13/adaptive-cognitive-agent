@@ -31,13 +31,17 @@ const TOOL_CONFIG: Record<string, { icon: typeof Brain; color: string }> = {
 }
 
 function ActivityTimeline() {
-  const { agentStatus, isAgentWorking } = useChatStore()
+  const { agentStatus, isAgentWorking, agentElapsed } = useChatStore()
   const [entries, setEntries] = useState<ActivityEntry[]>([])
   const scrollRef = useRef<HTMLDivElement>(null)
   const lastStatusRef = useRef<string | null>(null)
 
   useEffect(() => {
+    // Ignore heartbeat-style "Thinking... (Xs)" strings — they are keepalives, not
+    // activity. (Heartbeats now use agentElapsed and never reach agentStatus, but
+    // guard here too in case any path still sets such a status.)
     if (!agentStatus || agentStatus === lastStatusRef.current) return
+    if (/^Thinking\.\.\.\s*\(\d+s\)$/.test(agentStatus)) return
     lastStatusRef.current = agentStatus
 
     const toolMatch = agentStatus.match(/^Using (\w+)/)
@@ -83,7 +87,9 @@ function ActivityTimeline() {
         {isAgentWorking && (
           <div className="flex items-center gap-2 py-0.5">
             <Loader2 size={11} className="text-primary animate-spin" />
-            <span className="text-[11px] text-primary/70">Working...</span>
+            <span className="text-[11px] text-primary/70">
+              Working{agentElapsed && agentElapsed >= 8 ? ` (${agentElapsed}s)` : '...'}
+            </span>
           </div>
         )}
       </div>

@@ -140,6 +140,22 @@ async def _run_loop(
     search_count = 0
     max_searches = 10
 
+    # Plateau detection (ported concept from Nexus metacognition): if the agent
+    # repeats the same tool+input, it's stuck — nudge it to root-cause instead of
+    # retrying blindly. Additive only; does NOT change the exit condition.
+    tool_sig_counts: dict[str, int] = {}
+    plateau_nudged: set[str] = set()
+
+    # Stagnation detection (quality-based, ported from Nexus orchestrator's
+    # progress-based exit): count how many consecutive iterations have produced
+    # only "low-signal churn" (shell_exec/read_file/think without write/verify
+    # progress). Escalating nudges push the agent to either make real progress,
+    # step back to root-cause, or wrap up — instead of debugging in circles for
+    # 60+ iterations (the run3 failure mode).
+    churn_streak = 0
+    stagnation_nudged: set[int] = set()
+    PROGRESS_TOOLS = {"write_file", "verify_work", "verify_webapp", "create_tool", "create_skill", "create_hook"}
+
     responded = False
     for iteration in range(MAX_ITERATIONS):
         if _cancel_flags.get(session.id) or _stale():
@@ -203,6 +219,54 @@ async def _run_loop(
                         "content": [{"text": result}],
                     }
                 })
+
+                # Plateau detection: same tool+input repeated ≥3 times → inject a
+                # root-cause nudge once (don't spam). Helps break "rebuild/retry blindly" loops.
+                try:
+                    sig = f"{tool_name}:{hash(str(tool_input))}"
+                    tool_sig_counts[sig] = tool_sig_counts.get(sig, 0) + 1
+                    if tool_sig_counts[sig] >= 3 and sig not in plateau_nudged:
+                        plateau_nudged.add(sig)
+                        tool_results.append({"text": (
+                            f"[SYSTEM — PLATEAU DETECTED: you've called '{tool_name}' with the same input "
+                            f"{tool_sig_counts[sig]} times. STOP repeating. Step back and analyze the ROOT CAUSE: "
+                            f"(1) What exactly is happening vs expected? (2) What assumption might be wrong? "
+                            f"(3) What DIFFERENT approach is needed? Use `load_skill('systematic-debugging')`, "
+                            f"or `spawn_critic`, or `ask_user` if truly stuck. Do NOT retry the same call.]"
+                        )})
+                except Exception:
+                    pass
+
+            # --- Stagnation detection (quality-based exit nudges) ---
+            # An iteration "makes progress" if it used a progress tool (built/verified
+            # something). Otherwise it's churn (probing/reading/thinking). Long churn
+            # streaks = stuck. Escalate nudges by streak length so the agent converges.
+            iter_tools = {b["toolUse"]["name"] for b in content_blocks if "toolUse" in b}
+            made_progress = bool(iter_tools & PROGRESS_TOOLS)
+            if made_progress:
+                churn_streak = 0
+            else:
+                churn_streak += 1
+
+            # Soft nudge at 6 consecutive churn iterations (root-cause prompt).
+            if churn_streak == 6 and 6 not in stagnation_nudged:
+                stagnation_nudged.add(6)
+                tool_results.append({"text": (
+                    "[SYSTEM — STAGNATION: ~6 iterations without building or verifying anything "
+                    "(only probing/reading/thinking). You may be debugging in circles. STEP BACK: "
+                    "state in ONE sentence the exact root cause you're chasing and your single next "
+                    "hypothesis. If you can't, `load_skill('systematic-debugging')` and follow its 4 phases. "
+                    "Then make a concrete change (write_file) and verify_work it.]"
+                )})
+            # Hard nudge at 12 — push to either ship what works or ask the user.
+            elif churn_streak == 12 and 12 not in stagnation_nudged:
+                stagnation_nudged.add(12)
+                tool_results.append({"text": (
+                    "[SYSTEM — STAGNATION CRITICAL: ~12 iterations with no real progress. Per the "
+                    "Rule of Three, STOP iterating on this approach. Either: (a) ship the part that "
+                    "already works and report honestly what doesn't (with evidence), or (b) `ask_user` "
+                    "for direction. Do NOT keep probing. Decide now.]"
+                )})
 
             if iteration >= MAX_ITERATIONS - 3:
                 tool_results.append({"text": "[SYSTEM: You are running low on iterations. Wrap up your research and provide a comprehensive response in the next turn.]"})
@@ -319,6 +383,52 @@ def _extract_text(content_blocks: list) -> str:
     return text
 
 
+async def _retry_after_stall(
+    messages: list[dict],
+    system_prompt: str,
+    tools_list: list,
+    ws_send: Callable,
+    cancel_event: threading.Event | None,
+    session_id: str,
+    max_retries: int = 3,
+) -> dict | None:
+    """Retry an LLM call after a stall, with exponential backoff. Bedrock stalls are
+    usually transient (capacity queueing / throttle), so retrying the SAME request
+    after waiting works. Returns the response dict, or None if all retries stall.
+
+    Context is only trimmed when genuinely huge (>120K) — for small contexts trimming
+    does nothing and just wastes a retry on an identical request (the old bug)."""
+    total_chars = sum(_msg_chars(m) for m in messages)
+    if total_chars > 120000:
+        messages = _apply_context_window(messages, max_chars=80000)
+
+    for attempt in range(1, max_retries + 1):
+        if _cancel_flags.get(session_id):
+            return None
+        backoff = 2 ** attempt  # 2s, 4s, 8s
+        logger.warning(
+            f"[{session_id[:8]}] LLM stalled (ctx={total_chars} chars), "
+            f"retry {attempt}/{max_retries} after {backoff}s backoff..."
+        )
+        await ws_send({"type": "agent_status", "tool": "thinking", "detail": f"đang thử lại ({attempt}/{max_retries})..."})
+        try:
+            await asyncio.sleep(backoff)
+        except asyncio.CancelledError:
+            raise
+        try:
+            return await _call_llm(messages, system_prompt, tools_list, ws_send=ws_send, cancel_event=cancel_event)
+        except RuntimeError as e:
+            if "stalled" in str(e) or "timeout" in str(e).lower():
+                continue  # try again
+            logger.error(f"[{session_id[:8]}] retry {attempt} non-stall error: {e}")
+            return None
+        except Exception as e:
+            logger.error(f"[{session_id[:8]}] retry {attempt} failed: {e}")
+            return None
+    logger.error(f"[{session_id[:8]}] all {max_retries} retries stalled")
+    return None
+
+
 async def _call_llm_with_continuation(
     messages: list[dict],
     system_prompt: str,
@@ -339,16 +449,18 @@ async def _call_llm_with_continuation(
             response = await _call_llm(messages, system_prompt, tools_list, ws_send=ws_send, cancel_event=cancel_event)
         except RuntimeError as e:
             if "stalled" in str(e) or "timeout" in str(e).lower():
-                logger.warning(f"[{session_id[:8]}] LLM stalled, trimming context and retrying...")
-                messages = _apply_context_window(messages, max_chars=50000)
-                try:
-                    response = await _call_llm(messages, system_prompt, tools_list, ws_send=ws_send, cancel_event=cancel_event)
-                except Exception as retry_e:
-                    logger.error(f"[{session_id[:8]}] Retry also failed: {retry_e}")
+                # Bedrock stalls (no token for 120s) are usually TRANSIENT — capacity
+                # queueing / throttle, NOT oversized context. Retrying the SAME request
+                # after a short backoff succeeds far more often than mangling it.
+                # Only trim when context is genuinely large (>120K).
+                response = await _retry_after_stall(
+                    messages, system_prompt, tools_list, ws_send, cancel_event, session_id
+                )
+                if response is None:
                     if all_text_parts:
                         combined = "".join(all_text_parts)
                         return "end_turn", [{"text": combined}], messages
-                    return "end_turn", [{"text": "Đã gặp lỗi timeout khi xử lý context lớn. Vui lòng thử lại với câu hỏi ngắn hơn hoặc yêu cầu tôi tổng hợp kết quả."}], messages
+                    return "end_turn", [{"text": "Hệ thống đang quá tải tạm thời (LLM không phản hồi sau nhiều lần thử). Vui lòng gửi lại yêu cầu — nếu tác vụ rất lớn, hãy chia nhỏ để tôi xử lý từng phần."}], messages
             else:
                 logger.error(f"[{session_id[:8]}] LLM error during continuation {cont}: {e}")
                 if all_text_parts:
@@ -420,46 +532,91 @@ def _trim_large_blocks(content, limit: int = 2000):
     return new_content
 
 
+def _msg_chars(m: dict) -> int:
+    return len(str(m.get("content", "")))
+
+
+def _starts_with_orphan_tool_result(content) -> bool:
+    """A user message whose content leads with a toolResult — invalid as the first
+    message of a suffix because its matching toolUse (assistant) was dropped."""
+    if not isinstance(content, list):
+        return False
+    return any("toolResult" in b for b in content)
+
+
 def _apply_context_window(messages: list[dict], max_chars: int = 80000) -> list[dict]:
-    """Trim old large blocks if context exceeds limit. Keeps first message (user prompt)
-    and recent messages, but ALSO trims oversized file content (toolUse input) anywhere
-    except the single most recent message — otherwise a 20KB file write can't be reduced."""
-    total = sum(len(str(m.get("content", ""))) for m in messages)
+    """Keep context under budget. Two stages:
+
+    1. Trim oversized blocks (toolResult content + toolUse input) everywhere except
+       the single most recent message.
+    2. If STILL over budget, DROP whole old messages — keep messages[0] (the original
+       task) plus the largest *contiguous* suffix that fits. This is the real fix for
+       long sessions: trimming block content alone can't shrink 68 accumulated messages.
+
+    The result is kept valid for Bedrock:
+      - suffix is contiguous so toolUse→toolResult pairs stay together;
+      - the suffix must not start with an orphan toolResult (its toolUse was dropped);
+      - no two consecutive user turns (messages[0] is user, so the suffix can't lead
+        with a user turn either).
+    """
+    total = sum(_msg_chars(m) for m in messages)
     if total <= max_chars:
         return messages
 
     logger.info(f"Context too large ({total} chars), applying windowing (max {max_chars})")
-    result = []
-    # Always keep first user message
-    if messages:
-        result.append(messages[0])
 
-    # Middle messages: trim both toolResult and toolUse-input large blocks
-    for msg in messages[1:-6]:
+    # --- Stage 1: trim block content (cheap, lossless-ish) ---
+    if not messages:
+        return messages
+    trimmed = [messages[0]]
+    for msg in messages[1:-1]:
         content = msg.get("content", [])
         if isinstance(content, list):
-            result.append({"role": msg.get("role"), "content": _trim_large_blocks(content)})
+            trimmed.append({"role": msg.get("role"), "content": _trim_large_blocks(content)})
         else:
-            result.append(msg)
+            trimmed.append(msg)
+    if len(messages) > 1:
+        trimmed.append(messages[-1])  # active turn intact
 
-    # Recent 6 messages: keep readable, but if STILL over budget, trim everything
-    # except the very last message (the active turn the LLM needs in full).
-    recent = messages[-6:]
-    interim_total = sum(len(str(m.get("content", ""))) for m in result) + \
-        sum(len(str(m.get("content", ""))) for m in recent)
-    if interim_total > max_chars and len(recent) > 1:
-        for msg in recent[:-1]:
-            content = msg.get("content", [])
-            if isinstance(content, list):
-                result.append({"role": msg.get("role"), "content": _trim_large_blocks(content, limit=1500)})
-            else:
-                result.append(msg)
-        result.append(recent[-1])  # last message intact
-    else:
-        result.extend(recent)
+    if sum(_msg_chars(m) for m in trimmed) <= max_chars:
+        new_total = sum(_msg_chars(m) for m in trimmed)
+        logger.info(f"Context windowed (block-trim only): {total} -> {new_total} chars")
+        return trimmed
 
-    new_total = sum(len(str(m.get("content", ""))) for m in result)
-    logger.info(f"Context windowed: {total} -> {new_total} chars")
+    # --- Stage 2: drop whole old messages, keep head + contiguous suffix ---
+    head = trimmed[0]
+    head_chars = _msg_chars(head)
+    budget = max_chars - head_chars
+
+    # Walk from the end, accumulating messages until we exceed budget.
+    suffix: list[dict] = []
+    running = 0
+    for msg in reversed(trimmed[1:]):
+        c = _msg_chars(msg)
+        if suffix and running + c > budget:
+            break
+        suffix.append(msg)
+        running += c
+    suffix.reverse()
+
+    # Drop leading messages that would be invalid as the suffix start:
+    #  - an assistant/user turn carrying an orphan toolResult, or
+    #  - a user turn (would sit right after head, which is also a user turn).
+    while suffix:
+        first = suffix[0]
+        content = first.get("content", [])
+        if _starts_with_orphan_tool_result(content) or first.get("role") == "user":
+            dropped = suffix.pop(0)
+            running -= _msg_chars(dropped)
+        else:
+            break
+
+    result = [head] + suffix
+    new_total = sum(_msg_chars(m) for m in result)
+    logger.info(
+        f"Context windowed (dropped {len(trimmed) - len(result)} msgs): "
+        f"{total} -> {new_total} chars, kept {len(result)} messages"
+    )
     return result
 
 

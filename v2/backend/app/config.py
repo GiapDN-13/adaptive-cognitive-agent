@@ -8,9 +8,17 @@ class Settings(BaseSettings):
     # AWS Bedrock
     aws_access_key_id: str = ""
     aws_secret_access_key: str = ""
+    # Required when using temporary/STS credentials (access keys starting with ASIA).
+    aws_session_token: str = ""
     aws_region: str = "us-east-1"
     bedrock_light_model: str = "us.anthropic.claude-sonnet-4-6-v1"
     bedrock_heavy_model: str = "us.anthropic.claude-opus-4-6-v1"
+    # Per-request output cap. Lowered from 64000 to reduce capacity reservation
+    # (a contributor to throttle / "no data for 120s" stalls). Kept at 16K — not
+    # lower — because the agent writes large source files via write_file, whose
+    # content is model OUTPUT; cutting a toolUse mid-JSON would corrupt the call.
+    # The continuation loop handles legitimate longer text turns transparently.
+    bedrock_max_tokens: int = 16384
     # Model routing: route heavy one-shot reasoning to Opus. Off by default
     # because Opus is much slower and caused timeouts when used per-turn.
     enable_model_routing: bool = False
