@@ -132,7 +132,11 @@ async def _run_loop(
     gen: int = 0,
     cancel_event: threading.Event | None = None,
     is_subagent: bool = False,
+    max_iterations: int | None = None,
 ):
+    # Subagents get a smaller default budget so one subagent can't burn the whole
+    # session's iteration allowance (main agent uses the full MAX_ITERATIONS).
+    iter_budget = max_iterations if max_iterations is not None else (40 if is_subagent else MAX_ITERATIONS)
 
     def _stale():
         return _session_generation.get(session.id) != gen
@@ -157,7 +161,7 @@ async def _run_loop(
     PROGRESS_TOOLS = {"write_file", "verify_work", "verify_webapp", "create_tool", "create_skill", "create_hook"}
 
     responded = False
-    for iteration in range(MAX_ITERATIONS):
+    for iteration in range(iter_budget):
         if _cancel_flags.get(session.id) or _stale():
             break
 
@@ -210,7 +214,7 @@ async def _run_loop(
                         )
                 else:
                     result = await _execute_tool(
-                        session, tool_name, tool_input, ws_send
+                        session, tool_name, tool_input, ws_send, cancel_event
                     )
 
                 tool_results.append({
@@ -268,7 +272,7 @@ async def _run_loop(
                     "for direction. Do NOT keep probing. Decide now.]"
                 )})
 
-            if iteration >= MAX_ITERATIONS - 3:
+            if iteration >= iter_budget - 3:
                 tool_results.append({"text": "[SYSTEM: You are running low on iterations. Wrap up your research and provide a comprehensive response in the next turn.]"})
             messages.append({"role": "user", "content": tool_results})
 
@@ -381,6 +385,27 @@ def _extract_text(content_blocks: list) -> str:
         if "text" in block:
             text += block["text"]
     return text
+
+
+def extract_last_agent_text(messages: list[dict]) -> str:
+    """Robustly pull the subagent's final textual answer.
+
+    The naive `_extract_text(messages[-1])` returns "" when the last message is a
+    toolResult (e.g. the subagent hit its iteration budget mid-work). Walk backwards
+    to the most recent assistant message that actually contains text.
+    """
+    for msg in reversed(messages):
+        if msg.get("role") == "assistant":
+            txt = _extract_text(msg.get("content", []))
+            if txt and txt.strip():
+                return txt
+    return ""
+
+
+# Subagent nesting depth per session — prevents unbounded recursion
+# (a subagent spawning a critic spawning a subagent ...).
+_subagent_depth: dict[str, int] = {}
+_MAX_SUBAGENT_DEPTH = 3
 
 
 async def _retry_after_stall(
@@ -696,7 +721,8 @@ async def _wait_for_approval(request_id: str, timeout: int = 600) -> dict:
         await asyncio.wait_for(event.wait(), timeout=timeout)
         return _approval_results.pop(request_id, {"approved": False})
     except asyncio.TimeoutError:
-        return {"approved": False}
+        # Mark timeout distinctly so callers can tell "no approver" from "rejected".
+        return {"approved": False, "timed_out": True}
     finally:
         _pending_approvals.pop(request_id, None)
 
@@ -750,6 +776,7 @@ def cleanup_session_state(session_id: str):
     _cancel_events.pop(session_id, None)
     _session_pending_ids.pop(session_id, None)
     _response_results.pop(session_id, None)
+    _subagent_depth.pop(session_id, None)
     # Hook-level session history
     try:
         from app.agent.hook_manager import clear_session_history
@@ -788,9 +815,15 @@ async def _execute_plan_steps(
 
         await ws_send({"type": "step_progress", "plan_id": plan_id, "step_id": step_id, "status": "running"})
 
-        if not command or command in ("write_file", "read_file", "web_search", "think", "ask_user"):
+        if not command or command in ("write_file", "read_file", "web_search", "think", "ask_user", "verify_work"):
+            # propose_plan only executes shell commands. A step whose "command" is a
+            # tool name can't run here — surface it clearly (NOT a silent success) so
+            # the agent knows nothing happened and should run those tools directly.
             await ws_send({"type": "step_progress", "plan_id": plan_id, "step_id": step_id, "status": "done"})
-            results.append(f"Step {step_id} ({description}): skipped (no executable command)")
+            results.append(
+                f"Step {step_id} ({description}): NOT EXECUTED — '{command or '(empty)'}' is not a shell "
+                f"command. propose_plan runs bash only; call the '{command}' tool directly instead."
+            )
             continue
 
         if requires_approval(command):
@@ -810,41 +843,32 @@ async def _execute_plan_steps(
             command = approval.get("modified_command") or command
 
         exec_id = uuid.uuid4().hex[:8]
-        output_parts = []
+        # Exit code is ground truth for step success (not keyword guessing).
+        exit_code, full_output, timed_out = await _docker_manager.exec_command_capture(
+            session.container_id, command, timeout=900
+        )
+        await ws_send({"type": "terminal_output", "exec_id": exec_id, "content": full_output, "stream": "stdout", "done": False})
+        await ws_send({"type": "terminal_output", "exec_id": exec_id, "content": "", "stream": "stdout", "done": True})
 
-        async for chunk in _docker_manager.exec_command(session.container_id, command):
-            stream_type, content = chunk.split(":", 1)
-            output_parts.append(content)
-            await ws_send({
-                "type": "terminal_output",
-                "exec_id": exec_id,
-                "content": content,
-                "stream": stream_type,
-                "done": False,
-            })
-
-        await ws_send({
-            "type": "terminal_output",
-            "exec_id": exec_id,
-            "content": "",
-            "stream": "stdout",
-            "done": True,
-        })
-
-        full_output = "".join(output_parts)
         truncated, _ = truncate_output(full_output)
 
-        if "error" in full_output.lower() or "traceback" in full_output.lower():
+        if timed_out or exit_code != 0:
+            tag = f"[FAILED exit_code={exit_code}]" + (" [TIMED OUT]" if timed_out else "")
             await ws_send({"type": "step_progress", "plan_id": plan_id, "step_id": step_id, "status": "failed"})
-            results.append(f"Step {step_id} ({description}):\n$ {command}\n[FAILED]\n{truncated}")
-            results.append("Plan paused due to error. Agent will analyze and decide next action.")
+            results.append(f"Step {step_id} ({description}):\n$ {command}\n{tag}\n{truncated}")
+            results.append("Plan paused due to step failure. Agent will analyze and decide next action.")
             break
         else:
             await ws_send({"type": "step_progress", "plan_id": plan_id, "step_id": step_id, "status": "done"})
-            results.append(f"Step {step_id} ({description}):\n$ {command}\n{truncated}")
+            results.append(f"Step {step_id} ({description}):\n$ {command}\n[exit_code=0]\n{truncated}")
 
     summary = "\n\n---\n\n".join(results)
-    completed = sum(1 for r in results if "[FAILED]" not in r and "CANCELLED" not in r and "REJECTED" not in r)
+    # Count ACTUAL successes by the reliable success marker appended only on exit 0
+    # (line above). The old check looked for a literal "[FAILED]" that never appears
+    # (the real tag is "[FAILED exit_code=N]"), so failed/skipped steps were miscounted
+    # as completed — a plan with a failing step reported "N/N completed".
+    completed = sum(1 for r in results if "[exit_code=0]" in r)
     total = len(steps)
+    suffix = " — plan did NOT fully succeed (a step failed/was skipped; review above)" if completed < total else ""
 
-    return f"Plan execution: {completed}/{total} steps completed.\n\n{summary}"
+    return f"Plan execution: {completed}/{total} steps completed{suffix}.\n\n{summary}"

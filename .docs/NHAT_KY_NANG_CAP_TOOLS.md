@@ -19,7 +19,7 @@
 | 6 | `verify_webapp` | Nghiệm thu | ✅ | step chỉ `assert_status` (không assert nội dung) → **PASS giả** với blank-200 (đúng failure mode tool sinh ra để bắt) | **weak-check**: step PASS-bằng-status-thôi bị gắn cờ ⚠️ WEAK + note bắt thêm assert_contains/assert_json | 5/5 |
 | 7 | `think` | Agentic | ✅ | (display-only, không có gì để hỏng) | xác nhận đúng thiết kế: stream thought ra UI, return `[Thought recorded]`. (B) agent dùng think mọi turn-0 để lập kế hoạch — bằng chứng dồi dào từ eval #5/#6/#8 | n/a |
 | 8 | `ask_user` | Agentic | ✅ | (đã P2.2: timeout sentinel chống loop, option match case-insensitive) | xác nhận A chắc; (B) agent **cân bằng đúng**: không hỏi bừa việc tự quyết được, điều tra trước khi làm việc nguy hiểm (không `rm` liều) | (B) eval |
-| 9 | `propose_plan` | Agentic | ⏳ | — | — | — |
+| 9 | `propose_plan` | Agentic | ✅ | **bug đếm**: `completed/total` tìm literal `[FAILED]` (không tồn tại — tag thật `[FAILED exit_code=N]`) → plan có step fail vẫn báo "3/3 completed" | đếm theo marker thành công đáng tin `[exit_code=0]` + suffix "did NOT fully succeed" khi <total | 5/5 |
 | 10 | `spawn_critic` | Agentic | ⏳ | — | — | — |
 | 11 | `spawn_subagent` | Agentic | ⏳ | — | — | — |
 | 12 | `execute_pipeline` | Agentic | ⏳ | — | — | — |
@@ -29,7 +29,7 @@
 | 16 | `load_skill` | Knowledge | ⏳ | — | — | — |
 | 17 | `load_agent` | Knowledge | ⏳ | — | — | — |
 
-**Tiến độ:** 8/17 soi cùng nhau. *(13/17 đã qua hardening nền tảng — `.docs/BAO_CAO_TOOL_HARDENING.md`.)*
+**Tiến độ:** 9/17 soi cùng nhau. *(13/17 đã qua hardening nền tảng — `.docs/BAO_CAO_TOOL_HARDENING.md`.)*
 
 ---
 
@@ -356,6 +356,36 @@ Web có **CAPTCHA**: KHÔNG giải được (self-host). Firecrawl chỉ PHÁT H
 
 ### 🧪 Test tái lập
 `docker exec v2-backend-1 python /app/test_ask_user.py` (A) · `eval_ask_user_skill.py` (B)
+
+---
+
+## 9. `propose_plan` ✅
+**Ngày soi:** 2026-06-12 (phiên tự chạy) · **File:** `builtin_tools.py:handle_propose_plan`, `loop.py:_execute_plan_steps`
+
+> Đã hardening P2.3 (a: timed_out vs rejected; b: step=tên tool → "NOT EXECUTED" rõ; c: step success theo exit code). Đợt này soi dòng tổng kết.
+
+### 📷 BEFORE (`eval_plan.py`, monkeypatch FakeDM)
+| Khía cạnh | Hành vi cũ | Bằng chứng |
+|-----------|-----------|------------|
+| Đếm `completed/total` | plan [OK, FAIL exit1, không-chạy] → **"3/3 steps completed"** | `loop.py:866` đếm `if "[FAILED]" not in r` nhưng tag thật là `[FAILED exit_code=N]` → điều kiện luôn True → fail/skip bị đếm thành completed |
+
+→ **Bug nghiêm trọng về độ trung thực:** agent đọc "3/3 completed" tưởng plan thành công trong khi 1 step fail + 1 step chưa chạy.
+
+### 🔧 Thay đổi
+- Đếm `completed` theo **marker thành công đáng tin** `[exit_code=0]` (chỉ append ở nhánh exit==0), thay literal `[FAILED]` không bao giờ xuất hiện. Thêm suffix "— plan did NOT fully succeed (a step failed/was skipped; review above)" khi completed < total.
+
+### ✅ AFTER
+| Case | BEFORE | AFTER |
+|------|--------|-------|
+| plan [OK, FAIL, skip] | "3/3 steps completed" | **"1/3 steps completed — plan did NOT fully succeed"** |
+
+### (B) Năng lực agent DÙNG propose_plan — test thật (`eval_plan_skill.py`, gọi LLM)
+| Tình huống | THỰC TẾ đo được | Kết luận |
+|-----------|-----------------|----------|
+| Task đa-bước (mkdir/tạo file/cài pkg/chạy) | `propose_plan` 4 step, **mọi `command` là bash thật** (`mkdir -p`, `printf > file`, `pip install`, `python3`) — KHÔNG step nào là tên tool | ✅ schema cảnh báo "Never use tool names as commands" hiệu quả, không cần vá |
+
+### 🧪 Test tái lập
+`docker exec v2-backend-1 python /app/test_plan_steps.py` → **5/5 PASS** (thêm Case 3b completed-count) · (A) `eval_plan.py` · (B) `eval_plan_skill.py`
 
 ---
 
