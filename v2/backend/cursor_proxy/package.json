@@ -1,0 +1,14 @@
+{
+  "name": "cursor-proxy",
+  "version": "1.0.0",
+  "description": "Proxy for Cursor API",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "@cursor/sdk": "*",
+    "express": "*",
+    "cors": "*"
+  }
+}

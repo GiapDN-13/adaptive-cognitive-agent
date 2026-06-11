@@ -62,9 +62,12 @@ class ToolRegistry:
         specs = []
         for entry in self._tools.values():
             # Subagents (incl. critic) cannot spawn more agents (no recursion) or
-            # create runtime tools/hooks (risky). create_skill IS allowed — it only
-            # writes markdown, and the Critic uses it to persist domain checklists.
-            if is_subagent and entry.name in ("spawn_subagent", "spawn_critic", "create_tool", "create_hook"):
+            # create runtime tools/hooks (risky). execute_pipeline is excluded too —
+            # it internally spawns subagents, which would bypass the depth cap.
+            # create_skill IS allowed — it only writes markdown (Critic persists checklists).
+            if is_subagent and entry.name in (
+                "spawn_subagent", "spawn_critic", "create_tool", "create_hook", "execute_pipeline"
+            ):
                 continue
             specs.append({"toolSpec": entry.schema})
         return specs

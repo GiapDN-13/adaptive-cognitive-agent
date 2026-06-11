@@ -23,17 +23,23 @@ class Settings(BaseSettings):
     # because Opus is much slower and caused timeouts when used per-turn.
     enable_model_routing: bool = False
 
+    # Firecrawl self-hosted (anti-detection web: JS render + proxy + crawl/map).
+    # Empty url → web_search falls back to free DuckDuckGo engines. Set to the
+    # self-hosted endpoint to enable JS-wall scraping + site_map/crawl_site tools.
+    firecrawl_url: str = "http://host.docker.internal:3002"
+    firecrawl_api_key: str = "fc-smartagent-local"
+
     # Gemini fallback
     google_api_key: str = ""
     gemini_flash_model: str = "gemini-2.0-flash"
     gemini_pro_model: str = "gemini-2.5-pro"
 
-    # Azure OpenAI (GPT-5.4)
+    # Azure OpenAI (GPT-5.4) — key loaded from env (AZURE_OPENAI_API_KEY), never hardcoded.
     azure_openai_endpoint: str = "https://eastus2.api.cognitive.microsoft.com/openai/deployments/gpt-54/chat/completions?api-version=2024-02-01"
-    azure_openai_api_key: str = "CywSY3nXq9IvpNqRdnl6ljjiaNJQMK2159Ai19VWANEZxgBpU0GGJQQJ99CEACHYHv6XJ3w3AAAAACOGJ1aY"
+    azure_openai_api_key: str = ""
 
-    # Cursor
-    cursor_api_key: str = "crsr_ebfefd9f128472e33e5e838547ebe6ebd7a09f3d5760a7713e04bbb72e980fb3"
+    # Cursor — key loaded from env (CURSOR_API_KEY), never hardcoded.
+    cursor_api_key: str = ""
     cursor_proxy_url: str = "http://cursor-proxy:8001/v1/chat/completions"
 
     # Docker

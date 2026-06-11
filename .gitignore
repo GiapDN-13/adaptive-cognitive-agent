@@ -27,3 +27,6 @@ node_modules/
 # Test artifacts
 *.output
 rag_test_events.json
+
+# Vendored ECC bundle (separate 74M repo) — not committed here
+v2/backend/vendor/

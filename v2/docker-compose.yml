@@ -14,7 +14,9 @@ services:
       - AWS_REGION=us-east-1
       - BEDROCK_LIGHT_MODEL=${BEDROCK_LIGHT_MODEL:-us.anthropic.claude-sonnet-4-6-v1}
       - BEDROCK_HEAVY_MODEL=${BEDROCK_HEAVY_MODEL:-us.anthropic.claude-opus-4-6-v1}
-      - CURSOR_API_KEY=${CURSOR_API_KEY:-crsr_ebfefd9f128472e33e5e838547ebe6ebd7a09f3d5760a7713e04bbb72e980fb3}
+      # Secrets come from v2/.env (gitignored) — never hardcode a default here.
+      - CURSOR_API_KEY=${CURSOR_API_KEY}
+      - AZURE_OPENAI_API_KEY=${AZURE_OPENAI_API_KEY}
       - SANDBOX_IMAGE=smartagent-sandbox:latest
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
@@ -30,7 +32,8 @@ services:
     ports:
       - "8001:8001"
     environment:
-      - CURSOR_API_KEY=${CURSOR_API_KEY:-crsr_ebfefd9f128472e33e5e838547ebe6ebd7a09f3d5760a7713e04bbb72e980fb3}
+      # Secret from v2/.env (gitignored) — no hardcoded default.
+      - CURSOR_API_KEY=${CURSOR_API_KEY}
 
   frontend:
     build:

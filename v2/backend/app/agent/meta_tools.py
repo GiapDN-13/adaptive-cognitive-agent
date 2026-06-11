@@ -51,6 +51,10 @@ CREATE_TOOL_SCHEMA = {
                     "enum": ["intelligence", "action", "meta"],
                     "description": "Tool category: intelligence (read-only queries), action (side effects), meta (self-modification).",
                 },
+                "overwrite": {
+                    "type": "boolean",
+                    "description": "Set true to replace an existing runtime tool of the same name (default false).",
+                },
             },
             "required": ["tool_name", "description", "parameters", "handler_code"],
         }
@@ -129,6 +133,7 @@ async def handle_create_tool(session, tool_input, ws_send, cancel_event) -> str:
     parameters = tool_input.get("parameters", {})
     handler_code = tool_input.get("handler_code", "")
     category = tool_input.get("category", "action")
+    overwrite = bool(tool_input.get("overwrite", False))
 
     if not tool_name or not tool_name.replace("_", "").isalnum():
         return "Error: tool_name must be non-empty and contain only letters, digits, and underscores."
@@ -137,6 +142,19 @@ async def handle_create_tool(session, tool_input, ws_send, cancel_event) -> str:
         info = tool_registry.get_tool_info(tool_name)
         if info and info["builtin"]:
             return f"Error: Cannot overwrite builtin tool '{tool_name}'."
+        # Existing RUNTIME tool — require explicit overwrite to avoid clobbering.
+        if not overwrite:
+            return (
+                f"Error: a runtime tool '{tool_name}' already exists. Pass overwrite=true "
+                f"to replace it, or choose a different name."
+            )
+
+    # Validate `parameters` is a usable JSON Schema object (not just any dict).
+    if not isinstance(parameters, dict) or parameters.get("type") != "object" or "properties" not in parameters:
+        return (
+            "Error: `parameters` must be a JSON Schema object with \"type\": \"object\" and a "
+            "\"properties\" map (e.g. {\"type\":\"object\",\"properties\":{\"path\":{\"type\":\"string\"}},\"required\":[\"path\"]})."
+        )
 
     try:
         validate_handler_code(handler_code)

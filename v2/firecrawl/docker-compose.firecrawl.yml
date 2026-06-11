@@ -1,0 +1,95 @@
+# Firecrawl self-hosted — "slim" config for ~7.4GB Docker RAM.
+# Uses prebuilt ghcr.io images (no local build) + reduced mem_limit/concurrency.
+#
+# Run:   docker compose -f v2/firecrawl/docker-compose.firecrawl.yml up -d
+# Test:  curl -s -X POST http://localhost:3002/v1/scrape -H 'Content-Type: application/json' \
+#          -H 'Authorization: Bearer fc-smartagent-local' -d '{"url":"https://example.com"}'
+name: firecrawl
+
+x-common-env: &common-env
+  REDIS_URL: redis://fc-redis:6379
+  REDIS_RATE_LIMIT_URL: redis://fc-redis:6379
+  PLAYWRIGHT_MICROSERVICE_URL: http://fc-playwright:3000/scrape
+  POSTGRES_USER: postgres
+  POSTGRES_PASSWORD: postgres
+  POSTGRES_DB: postgres
+  POSTGRES_HOST: fc-postgres
+  POSTGRES_PORT: 5432
+  USE_DB_AUTHENTICATION: "false"
+  NUM_WORKERS_PER_QUEUE: 2
+  CRAWL_CONCURRENT_REQUESTS: 3
+  MAX_CONCURRENT_JOBS: 2
+  BROWSER_POOL_SIZE: 2
+  BULL_AUTH_KEY: fc-smartagent-local
+  TEST_API_KEY: fc-smartagent-local
+  LOGGING_LEVEL: INFO
+
+services:
+  fc-playwright:
+    image: ghcr.io/firecrawl/playwright-service:latest
+    environment:
+      PORT: 3000
+      MAX_CONCURRENT_PAGES: 3
+    networks: [firecrawl-net]
+    cpus: 1.5
+    mem_limit: 2g
+    memswap_limit: 2g
+    tmpfs:
+      - /tmp/.cache:noexec,nosuid,size=512m
+    logging: {driver: "json-file", options: {max-size: "10m", max-file: "2"}}
+
+  fc-redis:
+    image: redis:alpine
+    command: redis-server --bind 0.0.0.0
+    networks: [firecrawl-net]
+    logging: {driver: "json-file", options: {max-size: "5m", max-file: "2"}}
+
+  fc-rabbitmq:
+    image: rabbitmq:3-management
+    command: rabbitmq-server
+    networks: [firecrawl-net]
+    mem_limit: 512m
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "check_running"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    logging: {driver: "json-file", options: {max-size: "5m", max-file: "2"}}
+
+  fc-postgres:
+    image: ghcr.io/firecrawl/nuq-postgres:latest
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: postgres
+    networks: [firecrawl-net]
+    mem_limit: 512m
+    logging: {driver: "json-file", options: {max-size: "10m", max-file: "2"}}
+
+  fc-api:
+    image: ghcr.io/firecrawl/firecrawl:latest
+    environment:
+      <<: *common-env
+      HOST: "0.0.0.0"
+      PORT: 3002
+      NUQ_RABBITMQ_URL: amqp://fc-rabbitmq:5672
+      ENV: local
+    depends_on:
+      fc-redis: {condition: service_started}
+      fc-playwright: {condition: service_started}
+      fc-rabbitmq: {condition: service_healthy}
+    ports:
+      - "3002:3002"
+    command: node dist/src/harness.js --start-docker
+    networks: [firecrawl-net]
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    cpus: 3.0
+    mem_limit: 3g
+    memswap_limit: 3g
+    logging: {driver: "json-file", options: {max-size: "10m", max-file: "3"}}
+
+networks:
+  firecrawl-net:
+    driver: bridge

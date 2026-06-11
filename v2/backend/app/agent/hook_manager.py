@@ -158,7 +158,14 @@ class HookManager:
         """
         for hook in self.pre_hooks:
             try:
-                allowed, reason = await hook(tool_name, tool_input, session_id)
+                ret = await hook(tool_name, tool_input, session_id)
+                # Validate shape: a pre-hook MUST return (bool, str|None). A
+                # malformed hook (e.g. returns a bare string) fails open instead
+                # of crashing tool dispatch.
+                if not (isinstance(ret, tuple) and len(ret) == 2):
+                    logger.error(f"Pre-hook {getattr(hook, '__name__', hook)} returned bad shape {type(ret)}; ignoring (fail-open)")
+                    continue
+                allowed, reason = ret
                 if not allowed:
                     logger.warning(f"Tool {tool_name} blocked by pre-hook: {reason}")
                     return False, reason
@@ -177,7 +184,13 @@ class HookManager:
         mutated_result = result
         for hook in self.post_hooks:
             try:
-                mutated_result = await hook(tool_name, tool_input, mutated_result, session_id)
+                out = await hook(tool_name, tool_input, mutated_result, session_id)
+                # A post-hook MUST return a str (the possibly-mutated result). If it
+                # returns something else, keep the previous result (fail-open).
+                if isinstance(out, str):
+                    mutated_result = out
+                else:
+                    logger.error(f"Post-hook {getattr(hook, '__name__', hook)} returned {type(out)} (expected str); keeping prior result")
             except Exception as e:
                 logger.error(f"Error in post-hook for {tool_name}: {e}")
         return mutated_result

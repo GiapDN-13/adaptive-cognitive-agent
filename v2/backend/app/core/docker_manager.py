@@ -122,6 +122,106 @@ class DockerManager:
 
         return await asyncio.to_thread(_exec)
 
+    async def exec_command_capture(
+        self, container_id: str, command: str, timeout: int = 60
+    ) -> tuple[int, str, bool]:
+        """Run a command and capture (exit_code, combined_output, timed_out).
+
+        Enforces a real wall-clock timeout by wrapping the command in coreutils
+        `timeout`. `timeout` exits 124 when the deadline is hit — we surface that
+        as timed_out=True so callers (verify_work, shell_exec, pipeline steps)
+        can report it instead of treating a hung command as success.
+
+        Unlike exec_command (streaming, for live UX), this returns the exit code,
+        which is the ground truth for "did it work".
+        """
+        # `timeout -k 5 <secs> bash -c <cmd>` — send TERM at deadline, KILL 5s later.
+        # The inner command is passed as a single argv element so the user's command
+        # is not re-parsed by an extra shell layer.
+        def _exec():
+            container = self._client.containers.get(container_id)
+            exit_code, output = container.exec_run(
+                ["timeout", "-k", "5", str(int(timeout)), "bash", "-c", command],
+                demux=False,
+            )
+            text = output.decode("utf-8", errors="replace") if output else ""
+            timed_out = exit_code in (124, 137)  # 124 = TERM at deadline, 137 = KILL
+            return exit_code, text, timed_out
+
+        return await asyncio.to_thread(_exec)
+
+    async def exec_command_stream(
+        self, container_id: str, command: str, timeout: int = 900,
+        cancel_check=None,
+    ):
+        """Stream a command's output live AND return its exit code.
+
+        Best of both worlds vs the other two helpers:
+          - yields (stream_type, chunk) tuples as output arrives (live UX), then
+          - yields a final ("__exit__", "<code>|<timed_out>") sentinel.
+
+        Uses the low-level Docker exec API: exec_create → exec_start(stream=True)
+        drained in a background thread into an asyncio.Queue, then exec_inspect to
+        read the real ExitCode. The command is wrapped in coreutils `timeout` so a
+        hung process is actually killed (exit 124/137) and we don't block forever.
+        `cancel_check` is an optional callable returning True to abort early.
+        """
+        import queue as _queue
+
+        api = self._client.api
+        loop = asyncio.get_event_loop()
+
+        def _create_and_run(q: _queue.Queue):
+            try:
+                exec_id = api.exec_create(
+                    container_id,
+                    ["timeout", "-k", "5", str(int(timeout)), "bash", "-c", command],
+                )["Id"]
+                stream = api.exec_start(exec_id, stream=True, demux=True)
+                for stdout_chunk, stderr_chunk in stream:
+                    if stdout_chunk:
+                        q.put(("stdout", stdout_chunk.decode("utf-8", errors="replace")))
+                    if stderr_chunk:
+                        q.put(("stderr", stderr_chunk.decode("utf-8", errors="replace")))
+                info = api.exec_inspect(exec_id)
+                code = info.get("ExitCode", -1)
+                q.put(("__exit__", f"{code}"))
+            except Exception as e:
+                q.put(("__error__", str(e)))
+            finally:
+                q.put((None, None))  # end-of-stream marker
+
+        q: _queue.Queue = _queue.Queue()
+        worker = loop.run_in_executor(None, _create_and_run, q)
+
+        exit_code = -1
+        try:
+            while True:
+                if cancel_check is not None and cancel_check():
+                    yield ("__cancelled__", "")
+                    return
+                try:
+                    item = await asyncio.to_thread(q.get, True, 0.3)
+                except _queue.Empty:
+                    continue
+                stype, chunk = item
+                if stype is None:
+                    break
+                if stype == "__exit__":
+                    exit_code = int(chunk) if str(chunk).lstrip("-").isdigit() else -1
+                    continue
+                if stype == "__error__":
+                    yield ("__error__", chunk)
+                    return
+                yield (stype, chunk)
+        finally:
+            try:
+                await worker
+            except Exception:
+                pass
+        timed_out = exit_code in (124, 137)
+        yield ("__done__", f"{exit_code}|{int(timed_out)}")
+
     async def copy_file_to(
         self, container_id: str, content: bytes, remote_path: str
     ) -> None:
