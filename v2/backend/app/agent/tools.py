@@ -4,13 +4,14 @@ TOOL_DEFINITIONS = [
     {
         "toolSpec": {
             "name": "shell_exec",
-            "description": "Execute a bash command in the sandbox container. Output is streamed live to the user.",
+            "description": "Execute a bash command in the sandbox container. Output is streamed live and the return value is prefixed with [exit_code=N]. NOTE: each call is a SEPARATE shell — cd/venv/export do NOT persist between calls; chain dependent steps with && in one command, or set `cwd`.",
             "inputSchema": {
                 "json": {
                     "type": "object",
                     "properties": {
                         "command": {"type": "string", "description": "Bash command to execute"},
-                        "timeout": {"type": "integer", "description": "Timeout in seconds (default 60)"},
+                        "timeout": {"type": "integer", "description": "Max seconds before the command is killed (default 900). Use a small value for quick checks."},
+                        "cwd": {"type": "string", "description": "Optional working directory to run the command in (e.g. '/workspace/proj'). Saves prefixing with cd."},
                     },
                     "required": ["command"],
                 }
@@ -20,13 +21,14 @@ TOOL_DEFINITIONS = [
     {
         "toolSpec": {
             "name": "write_file",
-            "description": "Write content to a file in the container.",
+            "description": "Write content to a file in the container. Relative paths resolve under /workspace. Overwrites by default; use mode='append' to add to an existing file. The write is verified on disk (returns WRITE FAILED if it didn't land).",
             "inputSchema": {
                 "json": {
                     "type": "object",
                     "properties": {
-                        "path": {"type": "string", "description": "Absolute path in container"},
+                        "path": {"type": "string", "description": "File path (absolute, or relative to /workspace)"},
                         "content": {"type": "string", "description": "File content to write"},
+                        "mode": {"type": "string", "enum": ["overwrite", "append"], "description": "overwrite (default) replaces the file; append adds content to the end. NOTE: append joins bytes EXACTLY — it does NOT insert a newline, so include a leading '\\n' in content if you want the appended text on a new line."},
                     },
                     "required": ["path", "content"],
                 }
@@ -36,13 +38,16 @@ TOOL_DEFINITIONS = [
     {
         "toolSpec": {
             "name": "read_file",
-            "description": "Read file content from the container.",
+            "description": "Read file content from the container. Returns a header with the line range and total line count, so you know if more remains. Use `offset` to paginate large files. Reports 'FILE NOT FOUND' distinctly from an empty file.",
             "inputSchema": {
                 "json": {
                     "type": "object",
                     "properties": {
                         "path": {"type": "string", "description": "Absolute path in container"},
                         "max_lines": {"type": "integer", "description": "Max lines to read (default 200)"},
+                        "offset": {"type": "integer", "description": "1-based line number to start from (default 1). Use to read the next page, e.g. offset=201."},
+                        "max_bytes": {"type": "integer", "description": "Soft cap on returned text size in chars (default 50000) to protect context. Output is truncated past this; raise it to read large logs/dumps."},
+                        "line_numbers": {"type": "boolean", "description": "If true, prefix each line with its absolute line number (default false)."},
                     },
                     "required": ["path"],
                 }
@@ -52,14 +57,19 @@ TOOL_DEFINITIONS = [
     {
         "toolSpec": {
             "name": "web_search",
-            "description": "Search the web for information. Use for current data, documentation, or research.",
+            "description": "Search the web (multi-engine: DuckDuckGo + Lite fallback, retry + UA rotation), OR fetch a specific URL directly via `url`. Distinguishes network error from zero-results. For login/captcha/JS sources, pass `url` to fetch a known page directly.",
             "inputSchema": {
                 "json": {
                     "type": "object",
                     "properties": {
-                        "query": {"type": "string", "description": "Search query"},
+                        "query": {"type": "string", "description": "Search query. Multi-engine with retry."},
+                        "url": {"type": "string", "description": "Instead of searching, fetch THIS URL directly and return its main text. For known/important pages search can't surface."},
+                        "headers": {"type": "object", "description": "AUTH: HTTP headers sent to the target page when using `url`, e.g. {\"Authorization\":\"Bearer <token>\"} or {\"Cookie\":\"session=<id>\"} — to access token/cookie-gated pages."},
+                        "actions": {"type": "array", "description": "AUTH/login flow when using `url`: ordered browser actions for Firecrawl, e.g. [{\"type\":\"write\",\"selector\":\"#user\",\"text\":\"...\"},{\"type\":\"click\",\"selector\":\"button[type=submit]\"},{\"type\":\"wait\",\"milliseconds\":2000}]. Then the post-login page is scraped.", "items": {"type": "object"}},
+                        "max_results": {"type": "integer", "description": "Number of results to return, 1-10 (default 3)."},
+                        "fetch_content": {"type": "boolean", "description": "If true, also fetch and extract the main text of the top result for deeper context (default false)."},
                     },
-                    "required": ["query"],
+                    "required": [],
                 }
             },
         }
@@ -178,36 +188,51 @@ APPROVAL_REQUIRED_PATTERNS = [
 
 
 def requires_approval(command: str) -> bool:
-    for pattern in AUTO_APPROVE_PATTERNS:
-        if re.match(pattern, command.strip()):
-            return False
+    """Decide if a command needs user approval.
 
+    SECURITY FIX: dangerous patterns are checked FIRST and scan the WHOLE command
+    (re.search), so a read-only prefix can't smuggle a dangerous command past the
+    gate — e.g. `cat x && rm -rf /` previously matched the `^cat` auto-approve and
+    skipped the rm check; now the rm is caught regardless of what comes before it.
+
+    We keep the default permissive (unknown → auto) to preserve red-team freedom:
+    only the explicitly dangerous/expensive patterns require a human OK.
+    """
+    cmd = command.strip()
+
+    # 1. Dangerous ANYWHERE in the command → require approval (scans full string).
     for pattern in APPROVAL_REQUIRED_PATTERNS:
-        if re.search(pattern, command.strip()):
+        if re.search(pattern, cmd):
             return True
 
+    # 2. Otherwise safe to auto-run (preserves autonomous execution / red-team use).
     return False
 
 
 def truncate_output(output: str, max_lines: int = 150, max_chars: int = 12000) -> tuple[str, bool]:
-    if len(output) <= max_chars:
-        lines = output.split("\n")
-        if len(lines) <= max_lines:
-            return output, False
-
+    """Return (text, was_truncated). was_truncated is True if ANY content was
+    hidden — by line count OR char count — so callers (e.g. shell_exec's overflow
+    file) reliably know the full output isn't present in `text`."""
     lines = output.split("\n")
+    # Fast path: small enough on both axes → unchanged.
+    if len(output) <= max_chars and len(lines) <= max_lines:
+        return output, False
+
+    truncated_by_lines = False
     if len(lines) > max_lines:
         head = "\n".join(lines[:80])
         tail = "\n".join(lines[-30:])
         truncated = f"{head}\n\n... [{len(lines) - 110} lines hidden] ...\n\n{tail}"
+        truncated_by_lines = True
     else:
         truncated = output
 
+    truncated_by_chars = False
     if len(truncated) > max_chars:
         truncated = truncated[:max_chars] + f"\n... [truncated at {max_chars} chars, total {len(output)} chars]"
-        return truncated, True
+        truncated_by_chars = True
 
-    return truncated, len(lines) > max_lines
+    return truncated, (truncated_by_lines or truncated_by_chars)
 
 def get_tools(is_subagent: bool = False):
     """Get tool specs — delegates to ToolRegistry for dynamic tool list."""
