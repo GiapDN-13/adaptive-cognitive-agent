@@ -20,8 +20,8 @@
 | 7 | `think` | Agentic | ✅ | (display-only, không có gì để hỏng) | xác nhận đúng thiết kế: stream thought ra UI, return `[Thought recorded]`. (B) agent dùng think mọi turn-0 để lập kế hoạch — bằng chứng dồi dào từ eval #5/#6/#8 | n/a |
 | 8 | `ask_user` | Agentic | ✅ | (đã P2.2: timeout sentinel chống loop, option match case-insensitive) | xác nhận A chắc; (B) agent **cân bằng đúng**: không hỏi bừa việc tự quyết được, điều tra trước khi làm việc nguy hiểm (không `rm` liều) | (B) eval |
 | 9 | `propose_plan` | Agentic | ✅ | **bug đếm**: `completed/total` tìm literal `[FAILED]` (không tồn tại — tag thật `[FAILED exit_code=N]`) → plan có step fail vẫn báo "3/3 completed" | đếm theo marker thành công đáng tin `[exit_code=0]` + suffix "did NOT fully succeed" khi <total | 5/5 |
-| 10 | `spawn_critic` | Agentic | ⏳ | — | — | — |
-| 11 | `spawn_subagent` | Agentic | ⏳ | — | — | — |
+| 10 | `spawn_critic` | Agentic | ✅ | (đã P3.1: depth cap 3, max_iter 40, extract robust, depth restore finally) | xác nhận A chắc (5/5 test); (B) agent không spawn bừa — việc nhỏ làm thẳng, quyết định lớn `think` trước | 5/5 |
+| 11 | `spawn_subagent` | Agentic | ✅ | (đã P3.1: chung machinery; exclusion execute_pipeline+spawn_* cho subagent) | A chắc; (B) cân bằng đúng spawn ↔ inline | 5/5 |
 | 12 | `execute_pipeline` | Agentic | ⏳ | — | — | — |
 | 13 | `create_tool` | Self-ext | ⏳ | — | — | — |
 | 14 | `create_skill` | Self-ext | ⏳ | — | — | — |
@@ -29,7 +29,7 @@
 | 16 | `load_skill` | Knowledge | ⏳ | — | — | — |
 | 17 | `load_agent` | Knowledge | ⏳ | — | — | — |
 
-**Tiến độ:** 9/17 soi cùng nhau. *(13/17 đã qua hardening nền tảng — `.docs/BAO_CAO_TOOL_HARDENING.md`.)*
+**Tiến độ:** 11/17 soi cùng nhau. *(13/17 đã qua hardening nền tảng — `.docs/BAO_CAO_TOOL_HARDENING.md`.)*
 
 ---
 
@@ -386,6 +386,33 @@ Web có **CAPTCHA**: KHÔNG giải được (self-host). Firecrawl chỉ PHÁT H
 
 ### 🧪 Test tái lập
 `docker exec v2-backend-1 python /app/test_plan_steps.py` → **5/5 PASS** (thêm Case 3b completed-count) · (A) `eval_plan.py` · (B) `eval_plan_skill.py`
+
+---
+
+## 10. `spawn_critic` ✅ + 11. `spawn_subagent` ✅
+**Ngày soi:** 2026-06-12 (phiên tự chạy) · **File:** `builtin_tools.py:handle_spawn_critic/handle_spawn_subagent`, `loop.py:extract_last_agent_text/_subagent_depth`
+
+> Đã hardening P3.1 đầy đủ. Đợt này xác nhận A còn chắc + soi (B) khi-nào-spawn.
+
+### (A) — đã hardening P3.1, xác nhận bằng test (`test_subagent_limits.py` 5/5 PASS)
+| Cơ chế | Trạng thái |
+|--------|-----------|
+| Depth cap `_MAX_SUBAGENT_DEPTH=3` (chống spawn lồng vô hạn) | ✅ depth=max → "NOT SPAWNED" cho cả critic + subagent |
+| `extract_last_agent_text` walk-backwards | ✅ bỏ qua trailing toolResult → lấy đúng assistant text (không "" khi subagent hết budget) |
+| Exclusion cho subagent | ✅ subagent KHÔNG thấy execute_pipeline + spawn_* (chống đệ quy) |
+| `max_iterations=40` per-subagent + restore depth trong `finally` | ✅ depth về 0 sau spawn bình thường |
+
+### (B) Năng lực agent — KHI NÀO spawn (vs inline)? (`eval_subagent_skill.py`, gọi LLM)
+| Tình huống | THỰC TẾ | Kết luận |
+|-----------|---------|----------|
+| Việc nhỏ (tạo 1 file) | `write_file` thẳng | ✅ KHÔNG spawn thừa |
+| Quyết định kiến trúc rủi ro (SQLite cho 10tr user) | `think` (lập kế hoạch phản biện, spawn_critic ở turn sau) | ✅ không lạm dụng |
+| Task con phức tạp (audit bảo mật codebase) | `think` trước | ✅ hợp lý |
+
+**Kết luận (B): KHÔNG cần can thiệp.** Agent không spawn bừa (việc nhỏ làm thẳng), dùng `think` để quyết định cho việc lớn; prompt đã hướng dẫn dùng spawn_critic phản biện (prompts.py CRITICAL).
+
+### 🧪 Test tái lập
+`docker exec v2-backend-1 python /app/test_subagent_limits.py` → **5/5 PASS** · (B) `eval_subagent_skill.py`
 
 ---
 
