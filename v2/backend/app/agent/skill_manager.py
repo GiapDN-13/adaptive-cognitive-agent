@@ -97,7 +97,7 @@ class SkillManager:
         # The first three are SmartAgent's core discipline skills (ported from Nexus):
         # research before building, debug before rewriting, clean usable UI.
         priority_skill_ids = [
-            "research-first-design", "systematic-debugging", "ui-blueprint",
+            "research-first-design", "systematic-debugging", "ui-blueprint", "shell-mastery",
             "search-first", "verification-loop", "tdd-workflow", "security-review",
             "code-review", "backend-patterns", "python-patterns", "django-patterns",
             "fastapi-patterns", "api-design", "database-patterns", "docker-patterns",
@@ -137,7 +137,13 @@ class SkillManager:
         """Load the full content of a specific skill."""
         skill = self.skills.get(skill_id)
         if not skill:
-            return f"Error: Skill '{skill_id}' not found. Use get_skills_catalog() to see available skills."
+            # Agent-actionable recovery: suggest close matches by name substring so the
+            # agent can retry with a real id, instead of pointing at an internal fn.
+            ql = skill_id.lower().strip("./")
+            near = [sid for sid in self.skills if ql and (ql in sid.lower() or sid.lower() in ql)][:8]
+            hint = (f" Did you mean: {', '.join(near)}?" if near
+                    else " See the 'Available Skills' list in your system prompt for valid ids.")
+            return f"Error: Skill '{skill_id}' not found.{hint}"
 
         try:
             with open(skill["path"], "r", encoding="utf-8") as f:

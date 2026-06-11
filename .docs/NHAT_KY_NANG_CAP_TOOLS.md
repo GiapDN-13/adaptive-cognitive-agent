@@ -26,10 +26,10 @@
 | 13 | `create_tool` | Self-ext | ✅ | **LỖ HỔNG BẢO MẬT**: validator chặn import/call nhưng KHÔNG chặn dunder → `().__class__.__subclasses__()` thoát sandbox tới os/Popen trong backend process (chạm AWS creds + docker socket) | thêm `FORBIDDEN_ATTRS` chặn dunder attr + string-literal dunder; +vars/input/memoryview vào FORBIDDEN_CALLS | 7/7 |
 | 14 | `create_skill` | Self-ext | ✅ | (chung tool_safety; skill là text-only, ít rủi ro) | hưởng vá dunder; (B) agent không tạo bừa | 7/7 |
 | 15 | `create_hook` | Self-ext | ✅ | (chung tool_safety: validate_hook_code dùng cùng _check_calls) | hưởng vá dunder cho cả pre/post hook | 7/7 |
-| 16 | `load_skill` | Knowledge | ⏳ | — | — | — |
-| 17 | `load_agent` | Knowledge | ⏳ | — | — | — |
+| 16 | `load_skill` | Knowledge | ✅ | message not-found trỏ `get_skills_catalog()` (hàm nội bộ agent không gọi được) | gợi ý close-match agent-actionable; path-traversal đã an toàn sẵn (dict-key) | (A)+(B) |
+| 17 | `load_agent` | Knowledge | ✅ | (đã ổn: not-found liệt kê available agents) | xác nhận A an toàn (dict-key, không path-traversal) + B agent gọi đúng | (A)+(B) |
 
-**Tiến độ:** 15/17 soi cùng nhau. *(13/17 đã qua hardening nền tảng — `.docs/BAO_CAO_TOOL_HARDENING.md`.)*
+**Tiến độ:** ✅ **17/17 soi xong cùng nhau.** *(13/17 đã qua hardening nền tảng — `.docs/BAO_CAO_TOOL_HARDENING.md`.)*
 
 ---
 
@@ -487,7 +487,51 @@ Web có **CAPTCHA**: KHÔNG giải được (self-host). Firecrawl chỉ PHÁT H
 
 ---
 
-## (Mục tool tiếp theo điền khi soi — luôn bắt đầu bằng 📷 BEFORE)
+## 16-17. `load_skill` / `load_agent` ✅ (knowledge)
+**Ngày soi:** 2026-06-12 (phiên tự chạy) · **File:** `skill_manager.py`, `agent_manager.py`
+
+### 📷 BEFORE (`eval_knowledge.py`)
+| Khía cạnh | Hành vi | Ghi chú |
+|-----------|---------|---------|
+| Discover | 250 skills + 61 agents | OK |
+| Load skill tồn tại | `accessibility` → 6406 ký tự | ✅ |
+| **Path-traversal** `../../../etc/passwd` | **CHẶN** (dict-key lookup, không mở file ngoài) | ✅ an toàn sẵn |
+| not-found skill | trỏ `get_skills_catalog()` — **hàm Python nội bộ, agent không gọi được** | 🟡 recover kém |
+| not-found agent | liệt kê available agents | ✅ |
+
+### 🔧 Thay đổi
+- `load_skill_content` not-found: gợi ý **close-match** theo substring (`debugging` → "Did you mean: systematic-debugging, ...") — agent-actionable, thay vì trỏ hàm nội bộ. Hết match → trỏ "Available Skills" trong system prompt.
+
+### ✅ AFTER
+| Case | BEFORE | AFTER |
+|------|--------|-------|
+| load_skill `debugging` (sai id) | "Use get_skills_catalog()" | **"Did you mean: agent-introspection-debugging, systematic-debugging..."** |
+| path-traversal | CHẶN | CHẶN (giữ) |
+
+### (B) Năng lực agent — test thật (`eval_knowledge.py` part B)
+| Tình huống | THỰC TẾ | Kết luận |
+|-----------|---------|----------|
+| "nạp skill systematic-debugging trước khi build" | `load_skill{skill_id:"systematic-debugging"}` | ✅ gọi đúng tool + đúng id |
+
+### 🧪 Test tái lập
+`docker exec v2-backend-1 python /app/eval_knowledge.py` (A path-traversal/not-found + B agent-usage)
+
+---
+
+## 🏁 TỔNG KẾT — 17/17 tools đã soi (A + B)
+Hoàn thành 2026-06-12. Mỗi tool kiểm CẢ (A) đúng/an toàn + (B) agent dùng hiệu quả (gọi LLM thật).
+
+**Bug/lỗ hổng tự phát hiện & vá trong đợt soi tương tác (#5-17):**
+| Tool | Vấn đề | Mức |
+|------|--------|-----|
+| #5 verify_work | PASS-giả khi `expected` rỗng (contains/regex) → thêm verdict ERROR | cao |
+| #6 verify_webapp | status-only PASS che blank-200 → weak-check warning | trung |
+| #9 propose_plan | đếm `completed/total` sai (literal `[FAILED]` không tồn tại) → plan fail báo "N/N" | cao |
+| #12 execute_pipeline | dup-stage collapse checkpoint → "partial N/N-1" + không clear → khóa occurrence | trung |
+| **#13-15 create_tool/hook** | **dunder sandbox-escape qua validator** (`().__class__.__subclasses__()` → os/Popen trong backend) | **nghiêm trọng** |
+| #16 load_skill | not-found message không agent-actionable | thấp |
+
+**(B) kết luận chung:** prompt + schema đủ tốt cho phần lớn tool; vá prompt chỉ cần ở #5 (dạy 3 assert_mode). Agent **không lạm dụng** spawn/pipeline/create_tool (việc nhỏ làm thẳng), **thận trọng** với việc nguy hiểm (điều tra trước khi xóa), **cân bằng đúng** tự-chủ ↔ hỏi.
 
 ---
 
