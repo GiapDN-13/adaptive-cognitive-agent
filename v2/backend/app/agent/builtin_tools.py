@@ -1238,11 +1238,26 @@ async def handle_execute_pipeline(session, tool_input, ws_send, cancel_event) ->
     if not stages:
         return "Error: Pipeline must have at least one stage."
 
-    def _stage_key(stage: dict) -> str:
-        # Stable key by (name, goal) so reordering/inserting stages doesn't make a
-        # resumed checkpoint skip the wrong stage (index-keyed was fragile).
-        raw = f"{stage.get('name','')}|{stage.get('goal','')}"
+    def _stage_key(stage: dict, occurrence: int) -> str:
+        # Stable key by (name, goal, occurrence). name+goal keeps resume robust to
+        # REORDERING (a moved-but-unchanged stage still matches its checkpoint) and
+        # re-runs an EDITED stage. `occurrence` (how many identical name+goal stages
+        # came before this one) keeps the key UNIQUE when stages genuinely duplicate,
+        # so duplicates no longer collapse into one checkpoint entry ("partial N/N-1").
+        raw = f"{stage.get('name','')}|{stage.get('goal','')}|{occurrence}"
         return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:16]
+
+    def _occurrences(stages_list: list) -> list:
+        # occurrence index of each stage among identical (name,goal) siblings before it
+        seen: dict = {}
+        out = []
+        for st in stages_list:
+            sig = (st.get("name", ""), st.get("goal", ""))
+            out.append(seen.get(sig, 0))
+            seen[sig] = seen.get(sig, 0) + 1
+        return out
+
+    stage_occurrences = _occurrences(stages)
 
     # Load checkpoint — resume from where we left off (keyed by stable stage hash)
     checkpoint = _load_pipeline_checkpoint(session.id, pipeline_name)
@@ -1267,8 +1282,8 @@ async def handle_execute_pipeline(session, tool_input, ws_send, cancel_event) ->
         return "...[older findings truncated]\n" + text[-_FINDINGS_CAP:]
 
     # Restore prior results into context (in pipeline order)
-    for stage in stages:
-        k = _stage_key(stage)
+    for idx, stage in enumerate(stages):
+        k = _stage_key(stage, stage_occurrences[idx])
         if k in completed_stages:
             prior = completed_stages[k]
             results.append(prior["result_block"])
@@ -1276,7 +1291,7 @@ async def handle_execute_pipeline(session, tool_input, ws_send, cancel_event) ->
 
     aborted = False
     for i, stage in enumerate(stages):
-        skey = _stage_key(stage)
+        skey = _stage_key(stage, stage_occurrences[i])
         # Skip stages already completed in a prior run (checkpoint resume, by name)
         if skey in completed_stages:
             continue

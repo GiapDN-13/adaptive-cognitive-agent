@@ -22,14 +22,14 @@
 | 9 | `propose_plan` | Agentic | ✅ | **bug đếm**: `completed/total` tìm literal `[FAILED]` (không tồn tại — tag thật `[FAILED exit_code=N]`) → plan có step fail vẫn báo "3/3 completed" | đếm theo marker thành công đáng tin `[exit_code=0]` + suffix "did NOT fully succeed" khi <total | 5/5 |
 | 10 | `spawn_critic` | Agentic | ✅ | (đã P3.1: depth cap 3, max_iter 40, extract robust, depth restore finally) | xác nhận A chắc (5/5 test); (B) agent không spawn bừa — việc nhỏ làm thẳng, quyết định lớn `think` trước | 5/5 |
 | 11 | `spawn_subagent` | Agentic | ✅ | (đã P3.1: chung machinery; exclusion execute_pipeline+spawn_* cho subagent) | A chắc; (B) cân bằng đúng spawn ↔ inline | 5/5 |
-| 12 | `execute_pipeline` | Agentic | ⏳ | — | — | — |
+| 12 | `execute_pipeline` | Agentic | ✅ | **dup-key**: 2 stage trùng (name,goal) → checkpoint dict collapse 1 entry → báo "partial N/N-1" + checkpoint không bao giờ clear dù chạy hết | khóa theo (name,goal,**occurrence**) — unique khi trùng, vẫn skip-by-name khi reorder | 4/4 |
 | 13 | `create_tool` | Self-ext | ⏳ | — | — | — |
 | 14 | `create_skill` | Self-ext | ⏳ | — | — | — |
 | 15 | `create_hook` | Self-ext | ⏳ | — | — | — |
 | 16 | `load_skill` | Knowledge | ⏳ | — | — | — |
 | 17 | `load_agent` | Knowledge | ⏳ | — | — | — |
 
-**Tiến độ:** 11/17 soi cùng nhau. *(13/17 đã qua hardening nền tảng — `.docs/BAO_CAO_TOOL_HARDENING.md`.)*
+**Tiến độ:** 12/17 soi cùng nhau. *(13/17 đã qua hardening nền tảng — `.docs/BAO_CAO_TOOL_HARDENING.md`.)*
 
 ---
 
@@ -413,6 +413,39 @@ Web có **CAPTCHA**: KHÔNG giải được (self-host). Firecrawl chỉ PHÁT H
 
 ### 🧪 Test tái lập
 `docker exec v2-backend-1 python /app/test_subagent_limits.py` → **5/5 PASS** · (B) `eval_subagent_skill.py`
+
+---
+
+## 12. `execute_pipeline` ✅
+**Ngày soi:** 2026-06-12 (phiên tự chạy) · **File:** `builtin_tools.py:handle_execute_pipeline`
+
+> Đã hardening P3.3 (hash-keyed checkpoint, fail_fast=True, findings cap 12000, drop legacy index-key). Đợt này tìm edge-case còn lại.
+
+### 📷 BEFORE (`eval_pipeline.py`, monkeypatch _run_loop)
+| Khía cạnh | Hành vi cũ | Bằng chứng |
+|-----------|-----------|------------|
+| 2 stage TRÙNG (name,goal) | pipeline 3 stage (2 trùng) chạy hết → báo **"partial: 2/3"** | `completed_stages` là dict keyed hash(name,goal) → 2 stage trùng collapse 1 entry → `len(completed) != len(stages)` → `all_done=False` → checkpoint KHÔNG clear, agent tưởng chưa xong |
+
+### 🔧 Thay đổi (cân bằng 2 ràng buộc)
+- Khóa stage = `hash(name, goal, **occurrence**)` — occurrence = số stage (name,goal) y hệt đứng trước. Stage unique → occurrence=0 (giữ tính năng **reorder vẫn skip-by-name**); stage trùng → occurrence phân biệt (unique, không collapse).
+- *(Lần vá đầu dùng index thuần làm mất reorder-skip — test Case3 bắt được — nên chuyển sang occurrence.)*
+
+### ✅ AFTER
+| Case | BEFORE | AFTER |
+|------|--------|-------|
+| 2 stage trùng + 1 khác | "partial: 2/3" | **"completed: 3/3"** + checkpoint clear |
+| reorder stage đã xong | (skip by name) | vẫn skip ✅ (occurrence=0 ổn định) |
+
+### (B) Năng lực agent DÙNG execute_pipeline — test thật (`eval_pipeline_skill.py`)
+| Tình huống | THỰC TẾ | Kết luận |
+|-----------|---------|----------|
+| Task đa-phase (audit: recon→phân tích→báo cáo) | `think` lập kế hoạch (pipeline ở turn sau) | ✅ không lạm dụng |
+| Việc 1 bước (đếm dòng file) | `shell_exec` thẳng | ✅ KHÔNG pipeline thừa |
+
+**Kết luận (B): KHÔNG cần can thiệp.** Agent phân biệt task đa-phase vs việc đơn, không dựng pipeline thừa.
+
+### 🧪 Test tái lập
+`docker exec v2-backend-1 python /app/test_pipeline.py` → **4/4 PASS** (thêm Case 4 dup-stage) · (A) `eval_pipeline.py` · (B) `eval_pipeline_skill.py`
 
 ---
 
