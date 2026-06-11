@@ -20,12 +20,28 @@ ALLOWED_MODULES = frozenset({
     "typing", "dataclasses", "enum", "string", "textwrap",
     "csv", "io", "struct", "decimal", "fractions",
     "statistics", "random", "uuid", "copy", "operator",
+    # HTTP/HTML libs so runtime tools can fetch & parse (system ops stay forbidden;
+    # network is delegated to these libs, not to os/subprocess).
+    "requests", "bs4", "lxml", "html",
 })
 
 FORBIDDEN_CALLS = frozenset({
     "eval", "exec", "compile", "__import__", "globals", "locals",
     "getattr", "setattr", "delattr", "breakpoint", "exit", "quit",
-    "open",
+    "open", "vars", "input", "memoryview",
+})
+
+# Dunder attributes that enable sandbox escape WITHOUT an import — e.g.
+# ().__class__.__bases__[0].__subclasses__() walks to Popen/os. The import +
+# call whitelists miss these (no import, attribute access not a Name call), so
+# this code runs in the BACKEND process (AWS creds + docker socket) unchecked.
+# NOTE: this is host-process safety, NOT a red-team limit — commands inside the
+# container sandbox stay unrestricted; only self-written backend code is fenced.
+FORBIDDEN_ATTRS = frozenset({
+    "__class__", "__bases__", "__base__", "__subclasses__", "__mro__",
+    "__globals__", "__builtins__", "__import__", "__dict__", "__getattribute__",
+    "__subclasshook__", "__init_subclass__", "__code__", "__closure__",
+    "__func__", "__self__", "__module__", "__loader__", "__spec__",
 })
 
 
@@ -135,3 +151,16 @@ def _check_calls(tree: ast.AST) -> None:
                 raise CodeSafetyError(
                     f"Call to '{node.func.id}()' is forbidden in runtime extensions."
                 )
+        # Block dunder attribute access (sandbox escape via __class__/__subclasses__
+        # etc.) — covers both `x.__class__` (Attribute) and `getattr`-style names.
+        if isinstance(node, ast.Attribute) and node.attr in FORBIDDEN_ATTRS:
+            raise CodeSafetyError(
+                f"Access to dunder attribute '.{node.attr}' is forbidden — it enables "
+                f"sandbox escape (e.g. ().__class__.__subclasses__())."
+            )
+        # Also block dunder names appearing as string literals (getattr(x, '__class__'))
+        # or subscript keys, which AST sees as Constant strings.
+        if isinstance(node, ast.Constant) and isinstance(node.value, str) and node.value in FORBIDDEN_ATTRS:
+            raise CodeSafetyError(
+                f"String reference to dunder '{node.value}' is forbidden (sandbox-escape vector)."
+            )

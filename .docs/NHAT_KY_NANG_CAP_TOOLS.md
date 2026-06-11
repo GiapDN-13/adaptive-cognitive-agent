@@ -23,13 +23,13 @@
 | 10 | `spawn_critic` | Agentic | ✅ | (đã P3.1: depth cap 3, max_iter 40, extract robust, depth restore finally) | xác nhận A chắc (5/5 test); (B) agent không spawn bừa — việc nhỏ làm thẳng, quyết định lớn `think` trước | 5/5 |
 | 11 | `spawn_subagent` | Agentic | ✅ | (đã P3.1: chung machinery; exclusion execute_pipeline+spawn_* cho subagent) | A chắc; (B) cân bằng đúng spawn ↔ inline | 5/5 |
 | 12 | `execute_pipeline` | Agentic | ✅ | **dup-key**: 2 stage trùng (name,goal) → checkpoint dict collapse 1 entry → báo "partial N/N-1" + checkpoint không bao giờ clear dù chạy hết | khóa theo (name,goal,**occurrence**) — unique khi trùng, vẫn skip-by-name khi reorder | 4/4 |
-| 13 | `create_tool` | Self-ext | ⏳ | — | — | — |
-| 14 | `create_skill` | Self-ext | ⏳ | — | — | — |
-| 15 | `create_hook` | Self-ext | ⏳ | — | — | — |
+| 13 | `create_tool` | Self-ext | ✅ | **LỖ HỔNG BẢO MẬT**: validator chặn import/call nhưng KHÔNG chặn dunder → `().__class__.__subclasses__()` thoát sandbox tới os/Popen trong backend process (chạm AWS creds + docker socket) | thêm `FORBIDDEN_ATTRS` chặn dunder attr + string-literal dunder; +vars/input/memoryview vào FORBIDDEN_CALLS | 7/7 |
+| 14 | `create_skill` | Self-ext | ✅ | (chung tool_safety; skill là text-only, ít rủi ro) | hưởng vá dunder; (B) agent không tạo bừa | 7/7 |
+| 15 | `create_hook` | Self-ext | ✅ | (chung tool_safety: validate_hook_code dùng cùng _check_calls) | hưởng vá dunder cho cả pre/post hook | 7/7 |
 | 16 | `load_skill` | Knowledge | ⏳ | — | — | — |
 | 17 | `load_agent` | Knowledge | ⏳ | — | — | — |
 
-**Tiến độ:** 12/17 soi cùng nhau. *(13/17 đã qua hardening nền tảng — `.docs/BAO_CAO_TOOL_HARDENING.md`.)*
+**Tiến độ:** 15/17 soi cùng nhau. *(13/17 đã qua hardening nền tảng — `.docs/BAO_CAO_TOOL_HARDENING.md`.)*
 
 ---
 
@@ -446,6 +446,44 @@ Web có **CAPTCHA**: KHÔNG giải được (self-host). Firecrawl chỉ PHÁT H
 
 ### 🧪 Test tái lập
 `docker exec v2-backend-1 python /app/test_pipeline.py` → **4/4 PASS** (thêm Case 4 dup-stage) · (A) `eval_pipeline.py` · (B) `eval_pipeline_skill.py`
+
+---
+
+## 13-15. `create_tool` / `create_skill` / `create_hook` ✅ (self-extension)
+**Ngày soi:** 2026-06-12 (phiên tự chạy) · **File:** `tool_safety.py`, `meta_tools.py`
+
+> Đã hardening P3.5 (schema validate, overwrite guard, ALLOWED_MODULES nới requests/bs4/lxml, hook fail-open). Đợt này soi tìm thấy **lỗ hổng bảo mật nghiêm trọng**.
+
+### 📷 BEFORE — LỖ HỔNG SANDBOX-ESCAPE (probe thật trong container)
+| Khía cạnh | Hành vi cũ | Bằng chứng |
+|-----------|-----------|------------|
+| Validator AST | chặn `import os`/`eval()`/`open()` nhưng **KHÔNG chặn dunder** | code `().__class__.__bases__[0].__subclasses__()` **QUA validation** — không cần import vẫn tới `Popen`/`os` |
+
+→ **Mức độ: nghiêm trọng.** Code self-created chạy trong **backend process** (không phải container sandbox) → escape này chạm được AWS creds + docker socket. *Phân biệt rõ với red-team freedom: red-team là lệnh TRONG container sandbox; đây là code chạy trong backend host → PHẢI chặn.*
+
+### 🔧 Thay đổi
+- `FORBIDDEN_ATTRS`: chặn dunder attribute access nguy hiểm (`__class__`, `__bases__`, `__subclasses__`, `__mro__`, `__globals__`, `__builtins__`, `__code__`, ...) — cả dạng `x.__class__` (ast.Attribute) lẫn string literal `'__class__'` (getattr/subscript).
+- `_check_calls` quét thêm `ast.Attribute` + `ast.Constant` string.
+- Thêm `vars`/`input`/`memoryview` vào `FORBIDDEN_CALLS`.
+- Áp cho CẢ `validate_handler_code` (create_tool) và `validate_hook_code` (create_hook) vì chung `_check_calls`.
+
+### ✅ AFTER (probe lại)
+| Case | BEFORE | AFTER |
+|------|--------|-------|
+| `().__class__.__subclasses__()` | PASS (nguy hiểm) | **CHẶN** "dunder enables sandbox escape" |
+| `handler.__globals__` | PASS | **CHẶN** |
+| code sạch (json/re/requests) | PASS | PASS (không chặn nhầm) |
+
+### (B) Năng lực agent DÙNG self-extension — test thật (`eval_selfext_skill.py`)
+| Tình huống | THỰC TẾ | Kết luận |
+|-----------|---------|----------|
+| Thao tác lặp nhiều lần (tính CVSS) | `think` lập kế hoạch | ✅ cân nhắc đóng gói, không tạo bừa |
+| Việc 1 lần (2+2) | trả text thẳng, KHÔNG tạo tool | ✅ không lạm dụng self-ext |
+
+**Kết luận (B): KHÔNG cần can thiệp.** create_tool/skill/hook đều có trong registry, agent không tạo tool thừa cho việc đơn.
+
+### 🧪 Test tái lập
+`docker exec v2-backend-1 python /app/test_meta_tools.py` → **7/7 PASS** (thêm Case 2b dunder escape) · (B) `eval_selfext_skill.py`
 
 ---
 
