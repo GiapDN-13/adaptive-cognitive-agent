@@ -255,6 +255,38 @@ async def _run_loop(
                             f"(3) What DIFFERENT approach is needed? Use `load_skill('systematic-debugging')`, "
                             f"or `spawn_critic`, or `ask_user` if truly stuck. Do NOT retry the same call.]"
                         )})
+
+                    # Intent-plateau: DIFFERENT commands aimed at the SAME goal (the
+                    # kill/free-a-port loop: pkill→lsof→fuser→ps→/proc...) slips past the
+                    # exact-input check above. Detect by INTENT keyword, not exact input.
+                    if tool_name == "shell_exec":
+                        cmd_l = str(tool_input.get("command", "")).lower()
+                        intent = None
+                        if any(k in cmd_l for k in ("pkill", "lsof", "fuser", "kill ", "kill$", "kill -", "/proc/net/tcp", "address already in use")) or ("8080" in cmd_l and ("kill" in cmd_l or "pid" in cmd_l or "netstat" in cmd_l or "ss -" in cmd_l)):
+                            intent = "kill_or_free_port"
+                        if intent:
+                            ic = f"intent:{intent}"
+                            tool_sig_counts[ic] = tool_sig_counts.get(ic, 0) + 1
+                            if tool_sig_counts[ic] >= 4 and ic not in plateau_nudged:
+                                plateau_nudged.add(ic)
+                                tool_results.append({"text": (
+                                    "[SYSTEM — STUCK FREEING A PORT: you've tried several DIFFERENT commands to "
+                                    "kill a process / free a port. This sandbox is python:3.11-slim — it has NO "
+                                    "lsof / pkill / fuser / ps. Those commands silently no-op. To find & kill the "
+                                    "PID holding a port, use /proc directly, e.g.:\n"
+                                    "  python3 - <<'PY'\n"
+                                    "import os,glob\n"
+                                    "ino={l.split()[9] for l in open('/proc/net/tcp') if l.split()[1].endswith(':1F90') and l.split()[3]=='0A'}  # 1F90=8080, 0A=LISTEN\n"
+                                    "for fd in glob.glob('/proc/[0-9]*/fd/*'):\n"
+                                    " try:\n"
+                                    "  t=os.readlink(fd)\n"
+                                    "  if t.startswith('socket:') and t.split('[')[1].rstrip(']') in ino: os.kill(int(fd.split('/')[2]),9)\n"
+                                    " except: pass\n"
+                                    "PY\n"
+                                    "Better: avoid the conflict — start the server with a saved PID "
+                                    "(`python -m uvicorn ... & echo $! > /tmp/srv.pid`) and `kill $(cat /tmp/srv.pid)` "
+                                    "before restarting, instead of hunting the port each time.]"
+                                )})
                 except Exception:
                     pass
 
