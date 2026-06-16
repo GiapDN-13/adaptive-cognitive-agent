@@ -23,6 +23,12 @@ export class WebSocketManager {
   }
 
   connect() {
+    // Guard against double-connect (React StrictMode dev mounts twice, and
+    // reconnect timers can overlap). If a socket is already opening/open, keep it.
+    if (this.ws && (this.ws.readyState === WebSocket.CONNECTING || this.ws.readyState === WebSocket.OPEN)) {
+      return
+    }
+    this.intentionalClose = false
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
     const url = `${protocol}//${window.location.host}/ws/${this.sessionId}`
     this.ws = new WebSocket(url)
@@ -114,8 +120,19 @@ export class WebSocketManager {
   disconnect() {
     this.intentionalClose = true
     this.cleanup()
-    this.ws?.close(1000)
+    const ws = this.ws
     this.ws = null
+    if (!ws) return
+    if (ws.readyState === WebSocket.CONNECTING) {
+      // Closing a still-CONNECTING socket logs "closed before established" noise and
+      // triggers onclose/reconnect. Neutralize handlers and close once it opens.
+      ws.onopen = () => ws.close(1000)
+      ws.onclose = null
+      ws.onerror = null
+      ws.onmessage = null
+    } else {
+      ws.close(1000)
+    }
   }
 
   get isConnected(): boolean {

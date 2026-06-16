@@ -33,7 +33,7 @@ export function MessageBubble({ message }: Props) {
   }
 
   return (
-    <div className={`group flex gap-3 ${isUser ? 'flex-row-reverse' : ''}`}>
+    <div className={`group flex gap-3 msg-in ${isUser ? 'flex-row-reverse' : ''}`}>
       <div className={`w-7 h-7 rounded-full flex items-center justify-center shrink-0 mt-1 ${
         isUser ? 'bg-primary/20 text-primary' :
         isSystem ? 'bg-red-500/20 text-red-400' :

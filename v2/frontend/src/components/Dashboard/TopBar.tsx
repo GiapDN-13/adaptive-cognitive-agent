@@ -18,19 +18,24 @@ export function TopBar({ onStart, onEnd, onHistoryOpen, onRightPanelToggle, righ
 
   useEffect(() => {
     if (!sessionId || containerStatus !== 'running') return
-    const interval = setInterval(async () => {
-      const s = await getSessionStats(sessionId)
-      setStats({ cpu_percent: s.cpu_percent, memory_mb: s.memory_mb })
-      // Poll whether the agent has a web app listening on 8080
+    let cancelled = false
+    const tick = async () => {
+      // Skip polling while the tab is hidden — avoids piling up requests in the
+      // background and the request storm that made the UI feel laggy.
+      if (document.hidden || cancelled) return
       try {
+        const s = await getSessionStats(sessionId)
+        if (cancelled) return
+        setStats({ cpu_percent: s.cpu_percent, memory_mb: s.memory_mb })
         const res = await fetch(`/api/sessions/${sessionId}/app`)
         const data = await res.json()
-        setAppUrl(data.listening ? data.url : null)
+        if (!cancelled) setAppUrl(data.listening ? data.url : null)
       } catch {
-        setAppUrl(null)
+        if (!cancelled) setAppUrl(null)
       }
-    }, 5000)
-    return () => clearInterval(interval)
+    }
+    const interval = setInterval(tick, 5000)
+    return () => { cancelled = true; clearInterval(interval) }
   }, [sessionId, containerStatus])
 
   return (

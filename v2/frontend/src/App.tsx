@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useChatStore } from '@/store/chatStore'
 import { useWebSocket } from '@/hooks/useWebSocket'
 import { useSession } from '@/hooks/useSession'
@@ -21,9 +21,14 @@ export default function App() {
   const [historyOpen, setHistoryOpen] = useState(false)
   const [rightPanelOpen, setRightPanelOpen] = useState(true)
 
+  // Guard chống tạo session 2 lần: containerStatus='creating' được set bất đồng bộ
+  // sau await, nên effect có thể chạy lại khi status vẫn 'idle' → tạo 2 Docker
+  // container. Ref chặn ngay lập tức (đồng bộ), không chờ state cập nhật.
+  const startingRef = useRef(false)
   useEffect(() => {
-    if (!sessionId && containerStatus === 'idle') {
-      startSession()
+    if (!sessionId && containerStatus === 'idle' && !startingRef.current) {
+      startingRef.current = true
+      Promise.resolve(startSession()).finally(() => { startingRef.current = false })
     }
   }, [sessionId, containerStatus, startSession])
 

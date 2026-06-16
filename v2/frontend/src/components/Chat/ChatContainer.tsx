@@ -33,13 +33,26 @@ function ConnectionBanner() {
 export function ChatContainer() {
   const { messages, streamingContent, thinkingContent, isAgentWorking, agentStatus } = useChatStore()
   const bottomRef = useRef<HTMLDivElement>(null)
+  const scrollRef = useRef<HTMLDivElement>(null)
+  // Chỉ auto-scroll khi user ĐANG Ở ĐÁY — nếu họ cuộn lên đọc lại thì KHÔNG
+  // giật xuống mỗi chunk stream (đây là nguyên nhân chính gây "khó chịu" khi xem).
+  const stickToBottom = useRef(true)
+
+  const onScroll = () => {
+    const el = scrollRef.current
+    if (!el) return
+    stickToBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80
+  }
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+    if (stickToBottom.current) {
+      // 'auto' khi đang stream (mượt liên tục, không animation chồng nhau);
+      bottomRef.current?.scrollIntoView({ behavior: streamingContent ? 'auto' : 'smooth' })
+    }
   }, [messages, streamingContent, thinkingContent])
 
   return (
-    <div className="flex-1 overflow-y-auto px-4 py-4 space-y-3">
+    <div ref={scrollRef} onScroll={onScroll} className="flex-1 overflow-y-auto px-4 py-4 space-y-3 scroll-smooth">
       <ConnectionBanner />
       {messages.length === 0 && (
         <div className="flex flex-col items-center justify-center h-full text-gray-500">
@@ -61,7 +74,7 @@ export function ChatContainer() {
 
       {/* Thinking bubble */}
       {thinkingContent && (
-        <div className="flex gap-3">
+        <div className="flex gap-3 msg-in">
           <div className="w-7 h-7 rounded-full flex items-center justify-center shrink-0 mt-1 bg-purple-500/10">
             <Bot size={14} className="text-purple-400" />
           </div>
@@ -87,7 +100,7 @@ export function ChatContainer() {
           <div className="max-w-[85%] rounded-xl px-4 py-3 bg-surface border border-white/5">
             <div className="prose prose-invert prose-sm max-w-none prose-p:my-1.5 prose-code:text-primary prose-code:bg-white/5 prose-code:px-1 prose-code:rounded prose-code:text-xs">
               <ReactMarkdown remarkPlugins={[remarkGfm]}>{streamingContent}</ReactMarkdown>
-              <span className="inline-block w-1.5 h-4 bg-primary/60 animate-pulse ml-0.5 -mb-0.5" />
+              <span className="inline-block w-1.5 h-4 bg-primary rounded-sm stream-caret ml-0.5 -mb-0.5" />
             </div>
           </div>
         </div>
