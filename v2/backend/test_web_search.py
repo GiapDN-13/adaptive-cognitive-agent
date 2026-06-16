@@ -36,6 +36,15 @@ async def run():
         def raise_for_status(self):
             if self.status_code >= 400:
                 raise RuntimeError(f"HTTP {self.status_code}")
+        def json(self):
+            # Firecrawl engine is tried first (config has firecrawl_url) and calls
+            # r.json(). HTML mock bodies aren't JSON → treat as "firecrawl returned
+            # 0 hits" so the flow falls through to the DDG HTML path these cases test.
+            import json as _j
+            try:
+                return _j.loads(self.text)
+            except Exception:
+                return {"data": []}
 
     # monkeypatch requests inside the handler's module-level import
     import requests as real_requests
