@@ -133,6 +133,7 @@ async def _run_loop(
     cancel_event: threading.Event | None = None,
     is_subagent: bool = False,
     max_iterations: int | None = None,
+    force_model: str | None = None,
 ):
     # Subagents get a smaller default budget so one subagent can't burn the whole
     # session's iteration allowance (main agent uses the full MAX_ITERATIONS).
@@ -159,6 +160,7 @@ async def _run_loop(
     churn_streak = 0
     stagnation_nudged: set[int] = set()
     PROGRESS_TOOLS = {"write_file", "verify_work", "verify_webapp", "create_tool", "create_skill", "create_hook"}
+    faketool_nudges = 0  # times we nudged the agent for writing a tool call as text
 
     responded = False
     for iteration in range(iter_budget):
@@ -170,7 +172,7 @@ async def _run_loop(
 
         await ws_send({"type": "agent_status", "tool": "thinking", "detail": f"iteration {iteration + 1}"})
         stop_reason, content_blocks, messages = await _call_llm_with_continuation(
-            messages, system_prompt, tools_list, ws_send, cancel_event, session.id
+            messages, system_prompt, tools_list, ws_send, cancel_event, session.id, force_model=force_model
         )
 
         if _stale():
@@ -178,6 +180,21 @@ async def _run_loop(
 
         if stop_reason == "end_turn":
             text = _extract_text(content_blocks)
+            # Anti "fake tool call": some models (esp. Opus on long/complex prompts)
+            # END the turn after WRITING a tool call as text (e.g. "<tool_use>{...}")
+            # instead of emitting a real toolUse block — so nothing executes. Detect
+            # that pattern and nudge the agent to emit a REAL tool call, up to a few
+            # times, instead of accepting the hollow turn as the final answer.
+            if text and _looks_like_faked_tool_call(text) and faketool_nudges < 3:
+                faketool_nudges += 1
+                messages.append({"role": "assistant", "content": content_blocks})
+                messages.append({"role": "user", "content": [{"text": (
+                    "Bạn vừa VIẾT lời gọi công cụ dưới dạng văn bản — nó KHÔNG được thực thi nên "
+                    "bạn chưa nhận được dữ liệu thật. Hãy GỌI CÔNG CỤ THẬT (emit tool use, đúng tên "
+                    "tham số: read_file dùng 'path', shell_exec dùng 'command') để điều tra. "
+                    "Đừng in chuỗi <tool_use> hay JSON vào câu trả lời."
+                )}]})
+                continue
             if text:
                 if not is_subagent:
                     session.messages.append({"role": "assistant", "content": text})
@@ -387,6 +404,22 @@ def _extract_text(content_blocks: list) -> str:
     return text
 
 
+def _looks_like_faked_tool_call(text: str) -> bool:
+    """Detect when the model WROTE a tool call as text instead of emitting a real
+    toolUse block (so nothing executed). Markers: an XML-ish <tool_use> tag, or a
+    JSON object naming a tool + its args inline in the prose."""
+    if not text:
+        return False
+    t = text.lower()
+    if "<tool_use" in t or "</tool_use" in t or "<tool_call" in t:
+        return True
+    # JSON-style fake: {"name": "...", "input": {...}} or {"tool": ...}
+    import re as _re
+    if _re.search(r'\{\s*"(name|tool)"\s*:\s*"[a-z_]+"\s*,\s*"(input|arguments|parameters)"\s*:', t):
+        return True
+    return False
+
+
 def extract_last_agent_text(messages: list[dict]) -> str:
     """Robustly pull the subagent's final textual answer.
 
@@ -461,6 +494,7 @@ async def _call_llm_with_continuation(
     ws_send: Callable,
     cancel_event: threading.Event | None,
     session_id: str,
+    force_model: str | None = None,
 ) -> tuple[str, list, list[dict]]:
     """Call LLM with automatic max_tokens continuation. Returns (stop_reason, final_content_blocks, updated_messages)."""
     all_text_parts = []
@@ -471,7 +505,7 @@ async def _call_llm_with_continuation(
             break
 
         try:
-            response = await _call_llm(messages, system_prompt, tools_list, ws_send=ws_send, cancel_event=cancel_event)
+            response = await _call_llm(messages, system_prompt, tools_list, ws_send=ws_send, cancel_event=cancel_event, force_model=force_model)
         except RuntimeError as e:
             if "stalled" in str(e) or "timeout" in str(e).lower():
                 # Bedrock stalls (no token for 120s) are usually TRANSIENT — capacity
@@ -675,13 +709,15 @@ def _select_model(messages: list[dict]) -> str | None:
     return None  # default: fast light model (Sonnet)
 
 
-async def _call_llm(messages: list[dict], system_prompt: str, tools_list: list, ws_send: Callable = None, cancel_event: threading.Event | None = None, temperature: float = 0.4) -> dict:
+async def _call_llm(messages: list[dict], system_prompt: str, tools_list: list, ws_send: Callable = None, cancel_event: threading.Event | None = None, temperature: float = 0.4, force_model: str | None = None) -> dict:
     client = _get_llm()
     messages = _apply_context_window(messages)
     msg_count = len(messages)
     total_chars = sum(len(str(m.get("content", ""))) for m in messages)
     timeout = max(180, min(600, total_chars // 100))
-    model = _select_model(messages)
+    # force_model overrides routing — used by the blind evaluator to pin Opus
+    # regardless of the global routing toggle.
+    model = force_model or _select_model(messages)
     model_label = (model or "light").split(".")[-1]
     logger.info(f"_call_llm: {msg_count} messages, ~{total_chars} chars, timeout={timeout}s, temp={temperature}, model={model_label}")
     try:

@@ -66,7 +66,7 @@ class ToolRegistry:
             # it internally spawns subagents, which would bypass the depth cap.
             # create_skill IS allowed — it only writes markdown (Critic persists checklists).
             if is_subagent and entry.name in (
-                "spawn_subagent", "spawn_critic", "create_tool", "create_hook", "execute_pipeline"
+                "spawn_subagent", "spawn_critic", "spawn_evaluator", "create_tool", "create_hook", "execute_pipeline"
             ):
                 continue
             specs.append({"toolSpec": entry.schema})

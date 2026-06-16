@@ -1054,6 +1054,98 @@ async def handle_spawn_critic(session, tool_input, ws_send, cancel_event) -> str
     return f"CRITIC REVIEW of '{subject}':\n{verdict}\n\n[Hãy SỬA thiết kế theo phản biện trên TRƯỚC khi tiếp tục build.]"
 
 
+async def handle_spawn_evaluator(session, tool_input, ws_send, cancel_event) -> str:
+    """GIÁM KHẢO MÙ — spawn 1 agent đánh giá ĐỘ PHỦ độc lập (mặc định model Opus).
+
+    Khác spawn_critic: giám khảo MÙ về quá trình — chỉ nhận (yêu cầu gốc + sản phẩm),
+    KHÔNG thấy chuỗi suy nghĩ/các bước agent đã làm → không thiên vị tự-tham-chiếu.
+    Tự ĐIỀU TRA trên dữ liệu/sản phẩm thật (mở file, chạy thử) thay vì tin lời kể.
+    Phán VERDICT: ĐỦ | THIẾU + danh sách phần còn thiếu.
+    """
+    from app.agent.loop import (
+        _run_loop, _session_generation, extract_last_agent_text,
+        _subagent_depth, _MAX_SUBAGENT_DEPTH,
+    )
+    from app.agent.prompts import build_blind_evaluator_prompt
+    from app.agent.tool_registry import tool_registry
+    from app.config import settings
+
+    original_request = tool_input.get("original_request", "")   # YÊU CẦU GỐC (verbatim)
+    product = tool_input.get("product", "")                      # SẢN PHẨM bàn giao (mô tả + nơi chứa)
+    data_location = tool_input.get("data_location", "")          # đường dẫn file/dữ liệu thật để điều tra
+
+    if not original_request or not product:
+        return (
+            "SPAWN_EVALUATOR: cần cả 'original_request' (yêu cầu gốc của người dùng, nguyên văn) "
+            "và 'product' (sản phẩm đã làm + nơi chứa: đường dẫn file/cách chạy). "
+            "KHÔNG tóm tắt quá trình bạn đã làm — giám khảo phải MÙ về quá trình."
+        )
+
+    depth = _subagent_depth.get(session.id, 0)
+    if depth >= _MAX_SUBAGENT_DEPTH:
+        return (
+            f"EVALUATOR NOT SPAWNED: nesting depth {depth} đã chạm giới hạn "
+            f"({_MAX_SUBAGENT_DEPTH}). Tự kiểm độ phủ inline thay vì spawn."
+        )
+
+    await ws_send({
+        "type": "agent_message",
+        "content": "⚖️ **Giám khảo mù (Opus)** — đánh giá độc lập độ phủ sản phẩm...",
+        "metadata": None,
+    })
+
+    # Fresh context: CHỈ đề gốc + sản phẩm + nơi điều tra. KHÔNG đưa lịch sử/suy nghĩ.
+    eval_task = (
+        f"## YÊU CẦU GỐC (nguyên văn của người dùng)\n{original_request}\n\n"
+        f"## SẢN PHẨM BÀN GIAO (cần đánh giá)\n{product}\n\n"
+    )
+    if data_location:
+        eval_task += f"## DỮ LIỆU/SẢN PHẨM THẬT ĐỂ ĐIỀU TRA\n{data_location}\n\n"
+    eval_task += (
+        "Hãy ĐIỀU TRA thực tế (mở file đầu vào, chạy thử sản phẩm, đặt câu hỏi/đầu vào hiểm) rồi "
+        "phán VERDICT: ĐỦ | THIẾU theo đúng định dạng. KHÔNG tin lời kể — chỉ tin cái bạn tự kiểm chứng."
+    )
+
+    eval_prompt = build_blind_evaluator_prompt()
+    eval_tools = tool_registry.get_tool_specs(is_subagent=True)
+    sub_messages = [{"role": "user", "content": [{"text": eval_task}]}]
+
+    # Ép model mạnh (Opus) cho khâu gác cổng — bắt lỗi khó hơn làm.
+    heavy_model = getattr(settings, "bedrock_heavy_model", "") or None
+
+    _subagent_depth[session.id] = depth + 1
+    try:
+        await _run_loop(
+            session=session,
+            messages=sub_messages,
+            system_prompt=eval_prompt,
+            tools_list=eval_tools,
+            ws_send=ws_send,
+            gen=_session_generation.get(session.id, 0),
+            cancel_event=cancel_event,
+            is_subagent=True,
+            max_iterations=40,
+            force_model=heavy_model,
+        )
+    except Exception as e:
+        _subagent_depth[session.id] = depth
+        return f"EVALUATOR ERROR: {type(e).__name__}: {e}"
+    finally:
+        _subagent_depth[session.id] = depth
+
+    verdict = extract_last_agent_text(sub_messages) or "(evaluator produced no verdict — may have hit its iteration budget)"
+    await ws_send({
+        "type": "agent_message",
+        "content": "⚖️ **Giám khảo hoàn thành**. Nếu THIẾU → làm tiếp phần còn thiếu rồi mới báo cáo.",
+        "metadata": None,
+    })
+    return (
+        f"ĐÁNH GIÁ ĐỘ PHỦ (giám khảo mù, độc lập):\n{verdict}\n\n"
+        f"[Nếu VERDICT=THIẾU: TUYỆT ĐỐI chưa báo 'hoàn thành' — làm phần còn thiếu rồi spawn_evaluator lại. "
+        f"Nếu VERDICT=ĐỦ: được phép báo cáo.]"
+    )
+
+
 async def handle_ask_user(session, tool_input, ws_send, cancel_event) -> str:
     question = tool_input.get("question", "")
     options = tool_input.get("options")
@@ -1550,6 +1642,24 @@ def register_all_builtins(registry) -> None:
         },
     }
     registry.register("spawn_critic", critic_spec, handle_spawn_critic, builtin=True, category="meta")
+
+    # spawn_evaluator — blind coverage judge (runs on Opus). Gate BEFORE reporting "done".
+    evaluator_spec = {
+        "name": "spawn_evaluator",
+        "description": "Spawn a BLIND coverage evaluator (runs on the strongest model) to independently judge whether your product FULLY solves the original request — BEFORE you report completion. The evaluator is BLIND to your process (it only sees the original request + the product, NOT your reasoning/steps), so it has no self-referential bias. It INVESTIGATES on real data (opens the input files, runs the product, tries hard inputs) instead of trusting your description, then returns VERDICT: ĐỦ (enough) | THIẾU (missing) + the exact missing pieces. USE THIS as the gate before reporting any non-trivial task done. Do NOT summarize your process — give the raw original request and where the product/data lives.",
+        "inputSchema": {
+            "json": {
+                "type": "object",
+                "properties": {
+                    "original_request": {"type": "string", "description": "The user's ORIGINAL request, VERBATIM. Do NOT paraphrase or add what you did — the judge must stay blind to your process."},
+                    "product": {"type": "string", "description": "The delivered product + where it lives: file paths, how to run it, endpoints. Facts only, not a narrative of your effort."},
+                    "data_location": {"type": "string", "description": "Path(s) to the REAL input data/files the judge should open and investigate against (e.g. '/workspace/docs/report.xlsx'). Optional but strongly recommended for objective judging."},
+                },
+                "required": ["original_request", "product"],
+            }
+        },
+    }
+    registry.register("spawn_evaluator", evaluator_spec, handle_spawn_evaluator, builtin=True, category="meta")
 
     # spawn_subagent — special: only for main agent
     spawn_spec = {
