@@ -31,14 +31,26 @@ async def lifespan(app: FastAPI):
         f"(runtime: {ext_summary['tools']} tools, {ext_summary['skills']} skills, {ext_summary['hooks']} hooks)"
     )
 
+    # Khôi phục session từ container còn sống sau khi backend restart (sessions
+    # in-memory bị mất mỗi lần restart → tránh lỗi 404 khi frontend giữ id cũ).
+    try:
+        from app.deps import get_session_manager as _gsm
+        recovered = await _gsm().rehydrate()
+        if recovered:
+            logging.getLogger(__name__).info(f"Rehydrated {recovered} session(s) from running containers")
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"Session rehydrate skipped: {e}")
+
     cleanup_task = asyncio.create_task(_idle_cleanup_loop())
 
     yield
 
     cleanup_task.cancel()
-    sm = get_session_manager()
-    for session in await sm.list_sessions():
-        await sm.destroy(session.id)
+    # KHÔNG destroy container khi shutdown: backend restart (đổi creds/code) rất
+    # thường xuyên, mà xóa sandbox ở đây khiến session của user chết → lỗi 404
+    # "container not found" liên tục. Để container sống; rehydrate() lúc khởi động
+    # sẽ nhặt lại, và idle-cleanup (30') sẽ dọn cái thật sự bỏ hoang.
+    # (Nếu cần dọn toàn bộ thủ công: docker rm -f $(docker ps -aq -f name=smartagent-).)
 
 
 async def _idle_cleanup_loop():

@@ -216,8 +216,12 @@ export function useWebSocket() {
     }
 
     ws.onSessionLost = () => {
-      useChatStore.getState().setConnectionStatus('error', 'Session expired')
+      // Session chết (vd backend restart) → reset đưa containerStatus về 'idle',
+      // effect trong App.tsx sẽ TỰ tạo session mới. Báo trạng thái 'creating' để
+      // UI khỏi kẹt ở banner lỗi đỏ trong lúc dựng container mới.
       useChatStore.getState().reset()
+      useChatStore.getState().setConnectionStatus('connected')
+      useChatStore.getState().setContainerStatus('idle')
     }
 
     ws.onConnectionError = (reason) => {

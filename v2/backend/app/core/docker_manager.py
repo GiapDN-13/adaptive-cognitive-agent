@@ -20,6 +20,27 @@ class DockerManager:
         except Exception as e:
             raise RuntimeError(f"Cannot connect to Docker: {e}")
 
+    async def list_sandbox_containers(self) -> list[dict]:
+        """List RUNNING sandbox containers (label smartagent.session) so SessionManager
+        can rehydrate sessions after a backend restart (sessions live in-memory, but
+        the containers survive). Returns [{session_id, container_id, app_port}]."""
+        def _list():
+            out = []
+            for c in self._client.containers.list(filters={"label": "smartagent.session", "status": "running"}):
+                sid = c.labels.get("smartagent.session")
+                if not sid:
+                    continue
+                port = None
+                try:
+                    b = (c.attrs.get("NetworkSettings", {}).get("Ports", {}) or {}).get("8080/tcp")
+                    if b:
+                        port = int(b[0]["HostPort"])
+                except Exception:
+                    pass
+                out.append({"session_id": sid, "container_id": c.id, "app_port": port})
+            return out
+        return await asyncio.to_thread(_list)
+
     async def create_container(
         self, session_id: str, config: ContainerConfig
     ) -> tuple[str, int | None]:

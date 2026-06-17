@@ -37,6 +37,28 @@ class SessionManager:
     async def get(self, session_id: str) -> Session | None:
         return self._sessions.get(session_id)
 
+    async def rehydrate(self) -> int:
+        """Sau khi backend restart (sessions in-memory mất), khôi phục lại session từ
+        các container sandbox CÒN SỐNG. Container đặt tên smartagent-{id} + có label,
+        nên ta map lại được — tránh lỗi 404 'session not found' khi frontend giữ id cũ."""
+        try:
+            running = await self._docker.list_sandbox_containers()
+        except Exception:
+            return 0
+        n = 0
+        for c in running:
+            sid = c["session_id"]
+            if sid in self._sessions:
+                continue
+            self._sessions[sid] = Session(
+                id=sid,
+                container_id=c["container_id"],
+                container_config=ContainerConfig(image=settings.sandbox_image),
+                app_port=c.get("app_port"),
+            )
+            n += 1
+        return n
+
     async def destroy(self, session_id: str) -> None:
         session = self._sessions.pop(session_id, None)
         if session and session.container_id:
