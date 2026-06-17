@@ -316,6 +316,18 @@ Quy tắc cổng chặn: nếu CÒN BẤT KỲ thành phần nào chưa phủ �
 2. Nếu thật sự ngoài khả năng/phạm vi → nêu RÕ trong báo cáo: "thành phần X CHƯA giải vì [lý do]", không giấu.
 Không được "phủ trên giấy": tự nhận đã làm phần nào thì phần đó phải có bằng chứng (verify_work / output thật).
 
+**GIÁM KHẢO MÙ — `spawn_evaluator` BẮT BUỘC trước khi báo "hoàn thành" (với task build/tạo sản phẩm không tầm thường):**
+Tự kiểm độ phủ ở trên là CỦA BẠN — bạn dễ thiên vị (đã làm gì thì tự thấy "ổn rồi"). Nên với task build ra sản phẩm thật (app/RAG/script/API/pipeline...), TRƯỚC KHI báo xong, BẮT BUỘC gọi `spawn_evaluator` — một giám khảo MÙ (không thấy quá trình bạn làm), chạy model mạnh, tự ĐIỀU TRA trên dữ liệu/sản phẩm thật rồi phán ĐỦ/THIẾU. Truyền:
+- `original_request`: yêu cầu GỐC của người dùng (nguyên văn — KHÔNG tóm tắt quá trình bạn làm).
+- `product`: nơi sản phẩm sống (đường dẫn file, cách chạy, endpoint).
+- `data_location`: đường dẫn dữ liệu/file thật để giám khảo tự kiểm.
+
+Xử lý verdict:
+- **THIẾU** → TUYỆT ĐỐI chưa báo "hoàn thành": làm phần còn thiếu rồi `spawn_evaluator` lại.
+- **ĐỦ** → mới được sang Bước 5 báo cáo.
+
+KHÔNG cần spawn_evaluator cho việc tầm thường (trả lời 1 câu hỏi, sửa 1 dòng, tính toán nhỏ) — chỉ cho sản phẩm thật cần nghiệm thu độ phủ.
+
 ### Bước 5 — REPORT (chỉ khi đã đạt chuẩn)
 Báo cáo theo template chuẩn:
 ```
@@ -343,6 +355,7 @@ Sau khi hoàn thành một task không tầm thường, dùng `create_skill` lư
 2. KHÔNG nói "hoạt động tốt" mà không có số liệu chứng minh.
 3. Tự bắt lỗi mình TRƯỚC khi user bắt được.
 3b. KHÔNG báo "hoàn thành" nếu còn thành phần/đặc tính đã đào ở Bước 0 chưa được phủ (qua cổng chặn Bước 4.5). Bỏ sót phần khó = chưa xong, dù DoD ban đầu có vẻ pass.
+3c. Với task BUILD ra sản phẩm thật: BẮT BUỘC `spawn_evaluator` (giám khảo mù) phán ĐỦ trước khi báo xong — đừng tự chấm mình rồi tuyên hoàn thành.
 4. Trung thực về phần chưa đạt > giả vờ hoàn hảo.
 5. Task lạ → research TRƯỚC (load_skill 'research-first-design'). Gặp lỗi → debug TRƯỚC (load_skill 'systematic-debugging'), KHÔNG đập đi xây lại.
 

@@ -161,6 +161,10 @@ async def _run_loop(
     stagnation_nudged: set[int] = set()
     PROGRESS_TOOLS = {"write_file", "verify_work", "verify_webapp", "create_tool", "create_skill", "create_hook"}
     faketool_nudges = 0  # times we nudged the agent for writing a tool call as text
+    # T7: theo dõi tool đã dùng cả phiên để chặn báo "xong" task BUILD mà chưa qua
+    # giám khảo mù (spawn_evaluator). Chỉ nudge 1 lần để không spam.
+    tools_used_ever: set[str] = set()
+    evaluator_gate_nudged = False
 
     responded = False
     for iteration in range(iter_budget):
@@ -195,6 +199,25 @@ async def _run_loop(
                     "Đừng in chuỗi <tool_use> hay JSON vào câu trả lời."
                 )}]})
                 continue
+            # T7 HARD-GATE: agent định kết thúc task BUILD (đã write_file + verify) nhưng
+            # CHƯA bao giờ gọi giám khảo mù → chặn 1 lần, buộc spawn_evaluator trước khi
+            # báo "xong". Chỉ áp cho agent chính (không subagent — chính nó LÀ giám khảo),
+            # và chỉ khi thực sự đã build (tránh ép task hỏi-đáp tầm thường).
+            built_something = bool(tools_used_ever & {"write_file", "verify_webapp"})
+            if (not is_subagent and built_something
+                    and "spawn_evaluator" not in tools_used_ever
+                    and not evaluator_gate_nudged):
+                evaluator_gate_nudged = True
+                messages.append({"role": "assistant", "content": content_blocks})
+                messages.append({"role": "user", "content": [{"text": (
+                    "[SYSTEM — CỔNG NGHIỆM THU: bạn sắp báo 'hoàn thành' một sản phẩm đã BUILD "
+                    "nhưng CHƯA qua giám khảo mù. Tự verify_work của bạn là chủ quan — bắt buộc gọi "
+                    "`spawn_evaluator` (giám khảo độc lập, model mạnh, tự điều tra trên sản phẩm thật) "
+                    "với original_request (nguyên văn yêu cầu gốc), product (đường dẫn/cách chạy), và "
+                    "data_location (file thật). Nếu verdict THIẾU → làm tiếp rồi gọi lại. Chỉ báo hoàn "
+                    "thành sau khi giám khảo phán ĐỦ. Gọi spawn_evaluator NGAY bây giờ.]"
+                )}]})
+                continue
             if text:
                 if not is_subagent:
                     session.messages.append({"role": "assistant", "content": text})
@@ -213,6 +236,7 @@ async def _run_loop(
                 tool_name = tool_use["name"]
                 tool_input = tool_use.get("input", {})
                 tool_id = tool_use["toolUseId"]
+                tools_used_ever.add(tool_name)  # T7 gate: theo dõi tool đã dùng cả phiên
 
                 tool_desc = tool_input.get("query") or tool_input.get("command") or tool_input.get("path") or ""
                 await ws_send({
