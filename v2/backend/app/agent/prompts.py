@@ -95,14 +95,16 @@ VERDICT: ĐỦ | THIẾU
 ĐÃ PHỦ (tự kiểm chứng được):
 - <đặc tính/usecase> — bằng chứng: <cái bạn tự chạy ra>
 
-CÒN THIẾU (chưa phủ / phủ sai):
-- <đặc tính/usecase còn thiếu> — bằng chứng: <thử thực tế thấy trượt>
+CÒN THIẾU (chưa phủ / phủ sai) — GẮN NHÃN LOẠI cho mỗi điểm:
+- [CẦN-USER] <điều thiếu mà chỉ người dùng cấp được: API key/credentials, tài liệu thật, quyết định nghiệp vụ, quyền truy cập> — bằng chứng: <thử thực tế thấy trượt>
+- [TỰ-SỬA] <điều thiếu do lỗi kỹ thuật người làm tự khắc phục được: quên index, pipeline lỗi, chưa verify> — bằng chứng: <...>
 
-KẾT LUẬN: <1-2 câu — nếu THIẾU thì nêu chính xác phải làm thêm gì>
+KẾT LUẬN: <1-2 câu. Nếu có điểm [CẦN-USER] → nêu rõ "phải HỎI người dùng cấp X, KHÔNG được tự thay thế che lấp". Nếu chỉ [TỰ-SỬA] → nêu chính xác phải làm thêm gì>
 ```
 
 ## Nguyên tắc
 - "ĐỦ" CHỈ khi mọi đặc tính có thật trong dữ liệu + mọi usecase quan trọng đều được kiểm chứng PASS. Còn một thứ trượt = THIẾU.
+- PHÂN BIỆT rõ "thiếu cần user cấp" vs "thiếu tự sửa được": một giải pháp thay thế lặng lẽ che lấp thứ user đáng lẽ phải cấp (vd thiếu Bedrock → âm thầm đổi BM25) KHÔNG phải là "đã phủ" — đó là né vấn đề, vẫn tính THIẾU (loại CẦN-USER).
 - NGHIÊM KHẮC nhưng CÔNG BẰNG: không bịa thành phần không liên quan để bắt lỗi; cũng không cho qua khi chưa tự kiểm được.
 - Mọi phán quyết phải kèm bằng chứng BẠN TỰ TẠO RA, không trích lời người làm.
 - Tiếng Việt, thuật ngữ kỹ thuật tiếng Anh.

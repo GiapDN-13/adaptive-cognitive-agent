@@ -234,9 +234,15 @@ async def _run_loop(
                 messages.append({"role": "assistant", "content": content_blocks})
                 messages.append({"role": "user", "content": [{"text": (
                     f"[SYSTEM — GIÁM KHẢO PHÁN THIẾU (lần {evaluator_thieu_blocks}/{MAX_THIEU_BLOCKS}): "
-                    "TUYỆT ĐỐI chưa được báo 'hoàn thành'. Đọc lại danh sách CÒN THIẾU mà giám khảo nêu, "
-                    "LÀM phần còn thiếu đó (write_file/shell_exec + verify_work để chứng minh), rồi GỌI LẠI "
-                    "`spawn_evaluator` để kiểm. Chỉ báo hoàn thành khi giám khảo phán ĐỦ. Đừng giải thích — hãy SỬA.]"
+                    "TUYỆT ĐỐI chưa được báo 'hoàn thành'. Nhưng TRƯỚC KHI tự sửa, hãy PHÂN LOẠI mỗi điểm thiếu:\n"
+                    "• Thiếu do CẦN INPUT TỪ NGƯỜI DÙNG (API key/credentials như Bedrock, tài liệu thật, quyết "
+                    "định nghiệp vụ, quyền truy cập) → DỪNG và `ask_user` xin thứ đó. TUYỆT ĐỐI KHÔNG tự chế giải "
+                    "pháp thay thế để CHE LẤP (vd thiếu Bedrock thì lặng lẽ đổi sang BM25) — đó là né vấn đề gốc. "
+                    "Nếu thật sự có fallback hợp lý, vẫn phải `ask_user` nêu rõ 'thiếu X; chờ bạn cấp X, hoặc dùng "
+                    "fallback Y với hạn chế Z?' để người dùng QUYẾT, không tự ý.\n"
+                    "• Thiếu do LỖI KỸ THUẬT bạn tự sửa được (quên index, pipeline lỗi, chưa verify) → LÀM phần đó "
+                    "(write_file/shell_exec + verify_work), rồi GỌI LẠI `spawn_evaluator`.\n"
+                    "Chỉ báo hoàn thành khi giám khảo phán ĐỦ.]"
                 )}]})
                 continue
             if text:
