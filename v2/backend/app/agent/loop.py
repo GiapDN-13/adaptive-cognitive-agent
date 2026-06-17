@@ -165,6 +165,11 @@ async def _run_loop(
     # giám khảo mù (spawn_evaluator). Chỉ nudge 1 lần để không spam.
     tools_used_ever: set[str] = set()
     evaluator_gate_nudged = False
+    # T8: gate vòng-lặp-tới-khi-ĐỦ. Theo dõi verdict giám khảo gần nhất + số lần
+    # bị chặn vì THIẾU (cap để không treo nếu agent loay hoay không sửa nổi).
+    last_evaluator_verdict = None          # None | "THIEU" | "DU" | "UNCLEAR"
+    evaluator_thieu_blocks = 0
+    MAX_THIEU_BLOCKS = 3
 
     responded = False
     for iteration in range(iter_budget):
@@ -204,6 +209,7 @@ async def _run_loop(
             # báo "xong". Chỉ áp cho agent chính (không subagent — chính nó LÀ giám khảo),
             # và chỉ khi thực sự đã build (tránh ép task hỏi-đáp tầm thường).
             built_something = bool(tools_used_ever & {"write_file", "verify_webapp"})
+            # Gate 1: đã build mà CHƯA bao giờ gọi giám khảo → ép gọi lần đầu.
             if (not is_subagent and built_something
                     and "spawn_evaluator" not in tools_used_ever
                     and not evaluator_gate_nudged):
@@ -216,6 +222,21 @@ async def _run_loop(
                     "với original_request (nguyên văn yêu cầu gốc), product (đường dẫn/cách chạy), và "
                     "data_location (file thật). Nếu verdict THIẾU → làm tiếp rồi gọi lại. Chỉ báo hoàn "
                     "thành sau khi giám khảo phán ĐỦ. Gọi spawn_evaluator NGAY bây giờ.]"
+                )}]})
+                continue
+            # Gate 2 (T8): đã gọi giám khảo nhưng verdict THIẾU → CHẶN báo cáo, ép làm
+            # tiếp phần thiếu rồi gọi lại — lặp tới khi ĐỦ hoặc chạm cap (chống treo).
+            if (not is_subagent and built_something
+                    and last_evaluator_verdict == "THIEU"
+                    and evaluator_thieu_blocks < MAX_THIEU_BLOCKS):
+                evaluator_thieu_blocks += 1
+                last_evaluator_verdict = None  # reset, chờ lần kiểm lại
+                messages.append({"role": "assistant", "content": content_blocks})
+                messages.append({"role": "user", "content": [{"text": (
+                    f"[SYSTEM — GIÁM KHẢO PHÁN THIẾU (lần {evaluator_thieu_blocks}/{MAX_THIEU_BLOCKS}): "
+                    "TUYỆT ĐỐI chưa được báo 'hoàn thành'. Đọc lại danh sách CÒN THIẾU mà giám khảo nêu, "
+                    "LÀM phần còn thiếu đó (write_file/shell_exec + verify_work để chứng minh), rồi GỌI LẠI "
+                    "`spawn_evaluator` để kiểm. Chỉ báo hoàn thành khi giám khảo phán ĐỦ. Đừng giải thích — hãy SỬA.]"
                 )}]})
                 continue
             if text:
@@ -257,6 +278,16 @@ async def _run_loop(
                     result = await _execute_tool(
                         session, tool_name, tool_input, ws_send, cancel_event
                     )
+
+                # T8: bắt verdict của giám khảo mù để gate vòng-lặp-tới-khi-ĐỦ.
+                if tool_name == "spawn_evaluator":
+                    rl = (result or "").upper()
+                    if "VERDICT: THIẾU" in rl or "VERDICT:THIẾU" in rl or "VERDICT: THIEU" in rl:
+                        last_evaluator_verdict = "THIEU"
+                    elif "VERDICT: ĐỦ" in rl or "VERDICT:ĐỦ" in rl or "VERDICT: DU" in rl:
+                        last_evaluator_verdict = "DU"
+                    else:
+                        last_evaluator_verdict = "UNCLEAR"
 
                 tool_results.append({
                     "toolResult": {
