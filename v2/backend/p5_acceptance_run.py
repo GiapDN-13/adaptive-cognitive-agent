@@ -46,6 +46,7 @@ SIGNALS = {
     "shell_exec": 0,        # ran commands (install/run)
     "verify_work": 0,       # self-verified criteria
     "verify_webapp": 0,     # C3 — proved usable via real HTTP
+    "spawn_evaluator": 0,   # T3 — blind coverage judge (Opus) before reporting done
     "create_skill": 0,      # C5 — distilled a blueprint (self-extension)
     "ask_user": 0,
 }
