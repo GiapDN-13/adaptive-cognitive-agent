@@ -143,16 +143,21 @@ export function useWebSocket() {
         useChatStore.getState().setConnectionStatus('connected')
         break
 
-      case 'history_replay' as any:
-        for (const m of (msg as any).messages || []) {
-          addMessage({
-            id: crypto.randomUUID(),
-            role: m.role === 'user' ? 'user' : 'assistant',
-            content: m.content,
-            timestamp: Date.now(),
-          })
-        }
+      case 'history_replay' as any: {
+        // Replay là nguồn sự thật cho lịch sử đã lưu. Thay nguyên cụm tin replay cũ
+        // (kind='replay') bằng cụm mới để reconnect/nối lại tab KHÔNG nhân đôi chat,
+        // đồng thời giữ nguyên tin realtime phát sinh trong phiên hiện tại.
+        const replayed = ((msg as any).messages || []).map((m: any) => ({
+          id: crypto.randomUUID(),
+          role: m.role === 'user' ? 'user' : 'assistant',
+          content: m.content,
+          timestamp: Date.now(),
+          kind: 'replay' as const,
+        }))
+        const cur = useChatStore.getState().messages.filter((x) => (x as any).kind !== 'replay')
+        useChatStore.setState({ messages: [...replayed, ...cur] })
         break
+      }
 
       case 'agent_status' as any: {
         const { setAgentStatus } = useChatStore.getState()

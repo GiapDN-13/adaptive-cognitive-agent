@@ -114,10 +114,20 @@ async def websocket_endpoint(
         "session_id": session_id,
     })
 
-    if session.messages:
+    # Replay lịch sử chat khi (re)connect. Ưu tiên in-memory; nếu rỗng (vd backend
+    # vừa restart + rehydrate từ container còn sống) thì đọc từ persistence để
+    # không mất context khi user reload/nối lại tab.
+    replay_messages = session.messages
+    if not replay_messages:
+        try:
+            from app.core.persistence import load_session_messages
+            replay_messages = await load_session_messages(session_id)
+        except Exception:
+            replay_messages = []
+    if replay_messages:
         await ws_send({
             "type": "history_replay",
-            "messages": session.messages[-50:],
+            "messages": replay_messages[-50:],
         })
 
     sender_task = asyncio.create_task(sender_loop())

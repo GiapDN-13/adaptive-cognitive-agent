@@ -1,6 +1,20 @@
 import { create } from 'zustand'
 import type { Message, ApprovalRequest, PlanProposal, PlanStep, AgentQuestion, TerminalEntry } from '@/types/messages'
 
+// sessionId được lưu bền qua localStorage: reload/điều hướng tab KHÔNG được tạo
+// session+container mới (gây mất context + đẻ container rỗng). Khi load lại sẽ
+// xác minh container cũ còn sống rồi nối lại; chỉ tạo mới khi cũ đã chết.
+const SESSION_KEY = 'smartagent.sessionId'
+const persistSessionId = (id: string | null) => {
+  try {
+    if (id) localStorage.setItem(SESSION_KEY, id)
+    else localStorage.removeItem(SESSION_KEY)
+  } catch { /* localStorage có thể bị chặn — bỏ qua, chỉ mất tính bền */ }
+}
+const loadSessionId = (): string | null => {
+  try { return localStorage.getItem(SESSION_KEY) } catch { return null }
+}
+
 interface ChatState {
   sessionId: string | null
   containerStatus: 'idle' | 'creating' | 'running' | 'stopped'
@@ -41,7 +55,7 @@ interface ChatState {
 }
 
 export const useChatStore = create<ChatState>((set, get) => ({
-  sessionId: null,
+  sessionId: loadSessionId(),
   containerStatus: 'idle',
   messages: [],
   streamingContent: '',
@@ -58,7 +72,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   connectionStatus: 'connected',
   connectionDetail: null,
 
-  setSessionId: (id) => set({ sessionId: id }),
+  setSessionId: (id) => { persistSessionId(id); set({ sessionId: id }) },
   setContainerStatus: (status) => set({ containerStatus: status }),
 
   addMessage: (msg) => set((s) => ({ messages: [...s.messages, msg] })),
@@ -132,7 +146,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   setAgentElapsed: (seconds) => set({ agentElapsed: seconds }),
   setConnectionStatus: (status, detail = null) => set({ connectionStatus: status, connectionDetail: detail }),
 
-  reset: () => set({
+  reset: () => { persistSessionId(null); set({
     sessionId: null,
     containerStatus: 'idle',
     messages: [],
@@ -149,5 +163,5 @@ export const useChatStore = create<ChatState>((set, get) => ({
     agentElapsed: null,
     connectionStatus: 'connected',
     connectionDetail: null,
-  }),
+  }) },
 }))

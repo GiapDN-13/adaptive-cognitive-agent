@@ -17,20 +17,23 @@ import type { Message } from '@/types/messages'
 export default function App() {
   const { sessionId, containerStatus, addMessage, pendingQuestion, setPendingQuestion } = useChatStore()
   const { sendMessage, sendApproval, sendUserResponse, sendCancel } = useWebSocket()
-  const { startSession, endSession } = useSession()
+  const { startSession, resumeOrStart, endSession } = useSession()
   const [historyOpen, setHistoryOpen] = useState(false)
   const [rightPanelOpen, setRightPanelOpen] = useState(true)
 
   // Guard chống tạo session 2 lần: containerStatus='creating' được set bất đồng bộ
   // sau await, nên effect có thể chạy lại khi status vẫn 'idle' → tạo 2 Docker
   // container. Ref chặn ngay lập tức (đồng bộ), không chờ state cập nhật.
+  // Khi mở/reload tab: nếu có sessionId lưu trong localStorage → NỐI LẠI container
+  // cũ (resumeOrStart) thay vì đẻ container rỗng mới làm mất context.
   const startingRef = useRef(false)
   useEffect(() => {
-    if (!sessionId && containerStatus === 'idle' && !startingRef.current) {
+    if (containerStatus === 'idle' && !startingRef.current) {
       startingRef.current = true
-      Promise.resolve(startSession()).finally(() => { startingRef.current = false })
+      const boot = sessionId ? resumeOrStart(sessionId) : startSession()
+      Promise.resolve(boot).finally(() => { startingRef.current = false })
     }
-  }, [sessionId, containerStatus, startSession])
+  }, [sessionId, containerStatus, startSession, resumeOrStart])
 
   const handleSend = (content: string) => {
     const msg: Message = {

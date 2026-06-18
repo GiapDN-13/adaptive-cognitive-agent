@@ -5,7 +5,7 @@ export interface Message {
   timestamp: number
   metadata?: Record<string, unknown>
   // Transparency blocks rendered inline in chat
-  kind?: 'normal' | 'reasoning' | 'retrieval' | 'critique'
+  kind?: 'normal' | 'reasoning' | 'retrieval' | 'critique' | 'replay'
   retrieval?: RetrievalData
 }
 
