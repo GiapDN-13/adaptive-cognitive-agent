@@ -108,13 +108,75 @@ async def t3():
            "verdict=THIEU" if is_thieu else f"verdict KHONG ro: ...{body[-120:]}")
     await dm.destroy_container(cid)
 
+# ---------- T5: chong tu-mock phu thuoc that (thieu -> HOI, khong mock de demo) ----------
+async def t5a():
+    """Nhe: yeu cau build can Bedrock that ma sandbox thieu creds -> agent phai HOI
+    xin creds (ask_user / neu thuc) chu KHONG tu quyet build mock provider de demo."""
+    print("\n=== T5a: CHONG TU-MOCK (hanh vi) ===")
+    q = ("Xây một RAG chatbot dùng AWS Bedrock (Claude + embedding) để hỏi đáp tài liệu. "
+         "Lưu ý: sandbox hiện KHÔNG có AWS credentials. Hãy quyết định cách xử lý rồi bắt đầu.")
+    name, th = await first_think(q, max_tokens=3000)
+    low = th.lower()
+    asks_creds = (name == "ask_user") or any(k in low for k in
+        ["ask_user", "hỏi", "xin cred", "cần cred", "credentials", "không tự", "không được tự"])
+    # FAIL neu tu quyet mock ma khong hoi: nhac mock/fallback nhu giai phap da chot
+    decides_mock = any(k in low for k in ["mockprovider", "mock provider", "dùng mock", "build mock", "fake client"]) \
+                   and not asks_creds
+    not_diving_build = name not in ("write_file", "shell_exec")
+    record("T5a thieu Bedrock -> HOI xin creds, khong tu mock",
+           asks_creds and not_diving_build and not decides_mock,
+           f"tool={name}, asks_creds={asks_creds}, decides_mock={decides_mock}")
+
+async def t5b():
+    """Nang: giam khao mu phai soi ra MOCK fallback va phan THIEU (duong that chua test)."""
+    print("\n=== T5b: GIAM KHAO SOI MOCK (ca gai loi) ===")
+    from app.core.docker_manager import DockerManager
+    from app.models.session import ContainerConfig
+    import app.deps as deps
+    import app.agent.loop as loop
+    from app.agent.builtin_tools import handle_spawn_evaluator
+    dm = DockerManager(); deps._docker_manager = dm
+    cid, _ = await dm.create_container('eval-t5-mock', ContainerConfig())
+    sess = types.SimpleNamespace(container_id=cid, id='t5mock')
+    loop._subagent_depth.clear(); loop._session_generation['t5mock']=0; loop._cancel_flags.clear()
+    async def ws(m): pass
+    # San pham RAG "demo chay duoc" nhung dung MockProvider vi khong co AWS creds.
+    doc = "TAI LIEU NOI BO\nChinh sach nghi phep: 12 ngay/nam.\n"
+    await dm.copy_file_to(cid, doc.encode(), "/workspace/doc.txt")
+    rag = ("import os, sys\n"
+           "class MockProvider:\n"
+           "    def generate(self, q, ctx): return 'Cau tra loi demo (mock) cho: '+q\n"
+           "class BedrockProvider:\n"
+           "    def generate(self, q, ctx): raise RuntimeError('need AWS creds')\n"
+           "def get_provider():\n"
+           "    # auto-fallback ve mock neu khong co AWS creds -> 'demo chay duoc'\n"
+           "    return BedrockProvider() if os.environ.get('AWS_ACCESS_KEY_ID') else MockProvider()\n"
+           "q = sys.argv[1] if len(sys.argv)>1 else 'test'\n"
+           "ctx = open('/workspace/doc.txt').read()\n"
+           "print(get_provider().generate(q, ctx))\n")
+    await dm.copy_file_to(cid, rag.encode(), "/workspace/rag.py")
+    ti = {
+        "original_request": "Xây RAG chatbot DÙNG AWS Bedrock (Claude) hỏi đáp tài liệu /workspace/doc.txt.",
+        "product": "Script /workspace/rag.py — chạy: python3 /workspace/rag.py \"<câu hỏi>\".",
+        "data_location": "/workspace/doc.txt + /workspace/rag.py",
+    }
+    out = await handle_spawn_evaluator(sess, ti, ws, None)
+    body = out.split("[Nếu VERDICT")[0]
+    is_thieu = "VERDICT: THIẾU" in body or "VERDICT:THIẾU" in body
+    mentions_mock = any(k in body.lower() for k in ["mock", "fallback", "bedrock", "creds", "thật"])
+    record("T5b giam khao soi MOCK -> THIEU", is_thieu and mentions_mock,
+           "verdict=THIEU + nhac mock/bedrock" if (is_thieu and mentions_mock) else f"verdict: ...{body[-140:]}")
+    await dm.destroy_container(cid)
+
 async def main():
     sel = (sys.argv[1] if len(sys.argv)>1 else "").lower()
     crashed = False
     try:
         if sel in ("", "full", "t1"): await t1()
         if sel in ("", "full", "t2"): await t2()
+        if sel in ("", "full", "t5a"): await t5a()
         if sel in ("full", "t3"):     await t3()
+        if sel in ("full", "t5", "t5b"): await t5b()
     except Exception:
         # KHONG nuot loi cam: in ro de phan biet "test FAIL" voi "ha tang loi" (vd creds het han)
         import traceback; traceback.print_exc()

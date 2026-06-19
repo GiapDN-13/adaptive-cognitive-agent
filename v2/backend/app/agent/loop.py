@@ -33,84 +33,44 @@ def _get_llm():
     return _llm_client
 
 
-_GREETING_PREFIXES = (
-    "xin chào", "chào ", "chào!", "hi", "hello", "helo", "alo", "ê", "hey",
-    "cảm ơn", "thanks", "thank you", "ok", "oke", "okay", "test", "ping",
-)
+# Pure gate/decision logic lives in gates.py (unit-tested without LLM/Docker).
+# These thin wrappers keep loop.py's existing call sites unchanged.
+from app.agent import gates
 
 
 def _latest_task_request(session) -> str:
-    """Find the user's actual TASK message (verbatim) to hand the blind evaluator,
-    so it judges the product against what was really asked — not a greeting.
+    """Verbatim user TASK message for the blind evaluator (skips greetings).
+    Delegates to gates.latest_task_request; see it for the bug this guards."""
+    return gates.latest_task_request(getattr(session, "messages", []) or [], extract_text=_extract_text)
 
-    The bug this guards against: in a multi-turn chat that opens with "Xin chào",
-    the agent picked messages[0] ("Xin chào") as original_request, so the judge
-    compared a whole RAG build against a greeting and (correctly, but uselessly)
-    ruled THIEU. We scan user turns newest→oldest and skip pure greetings/trivia,
-    returning the first substantive request. Falls back to the last user turn."""
-    last_user = ""
-    for m in reversed(getattr(session, "messages", []) or []):
-        if m.get("role") != "user":
-            continue
-        content = m.get("content", "")
-        if isinstance(content, list):
-            content = " ".join(
-                b.get("text", "") for b in content if isinstance(b, dict) and "text" in b
-            )
-        text = str(content).strip()
-        if not text:
-            continue
-        if not last_user:
-            last_user = text
-        low = text.lower()
-        is_greeting = len(text) < 30 and any(low.startswith(p) for p in _GREETING_PREFIXES)
-        if not is_greeting:
-            return text
-    return last_user
+
+async def _preexisting_workspace_note(session) -> str | None:
+    """If /workspace holds files from a PRIOR task (container reuse), return a
+    context note so the agent doesn't claim them as its own work. The `ls` (I/O)
+    is here; the message logic is the pure gates.preexisting_workspace_note."""
+    cid = getattr(session, "container_id", None)
+    if not cid:
+        return None
+    try:
+        from app.deps import get_docker_manager
+        dm = get_docker_manager()
+        # List top-level entries; ignore dotfiles. Cheap, bounded.
+        _code, out = await dm.exec_command_simple(
+            cid, "ls -1 /workspace 2>/dev/null | grep -v '^[.]' | head -40"
+        )
+    except Exception:
+        return None
+    return gates.preexisting_workspace_note((out or "").splitlines())
 
 
 def _is_transient_server_error(e: Exception) -> bool:
-    """Detect transient AWS Bedrock server-side errors that boto3 already exhausted
-    its own retries on (InternalServerException, ServiceUnavailable, ModelNotReady,
-    5xx, throttling). These are NOT our fault and NOT fatal — waiting a few seconds
-    and resending the SAME request usually succeeds. Distinct from credential expiry
-    (handled separately) and from oversized-context stalls (RuntimeError path)."""
-    s = f"{type(e).__name__}: {e}".lower()
-    return any(
-        marker in s
-        for marker in (
-            "internalserver",
-            "serviceunavailable",
-            "service unavailable",
-            "modelnotready",
-            "model not ready",
-            "modeltimeout",
-            "throttling",
-            "too many requests",
-            "503",
-            "500",
-            "reached max retries",
-        )
-    )
+    """Transient Bedrock server error (5xx/throttle) → backoff+retry. See gates."""
+    return gates.is_transient_server_error(e)
 
 
 def _is_expired_token(e: Exception) -> bool:
-    """Detect AWS STS expired/invalid-token errors. STS temporary creds (ASIA…)
-    expire ~hourly; when they do, Bedrock raises ExpiredTokenException (or an
-    UnrecognizedClientException / 'security token' message). We treat these as a
-    PAUSE-able condition, not a fatal error, so the user can paste a fresh token
-    without losing the in-flight task."""
-    s = f"{type(e).__name__}: {e}".lower()
-    return any(
-        marker in s
-        for marker in (
-            "expiredtoken",
-            "the security token included in the request is expired",
-            "security token",
-            "unrecognizedclient",
-            "invalidsignatureexception",
-        )
-    )
+    """AWS STS expired/invalid-token → pause for fresh token. See gates."""
+    return gates.is_expired_token(e)
 
 
 async def _pause_for_fresh_credentials(session_id: str, ws_send: Callable) -> bool:
@@ -176,6 +136,14 @@ async def run_agent_loop(
     if len(session.messages) == 1:
         title = user_message[:60].strip()
         await update_session_title(session.id, title)
+        # #4 — Container có thể được TÁI DÙNG (rehydrate sau restart, hoặc reconnect
+        # tab cũ). Nếu /workspace đã có sản phẩm từ phiên trước, agent dễ tưởng đó là
+        # thứ MÌNH vừa tạo → loạn (vd thấy mekongai-rag/ rồi báo "tôi đã build xong").
+        # Chèn 1 ghi chú trung thực vào context để agent xác nhận trước khi đụng/xoá.
+        note = await _preexisting_workspace_note(session)
+        if note:
+            session.messages.append({"role": "user", "content": note})
+            await save_session_messages(session.id, session.messages)
 
     messages = _build_messages(session)
 
@@ -408,13 +376,7 @@ async def _run_loop(
 
                 # T8: bắt verdict của giám khảo mù để gate vòng-lặp-tới-khi-ĐỦ.
                 if tool_name == "spawn_evaluator":
-                    rl = (result or "").upper()
-                    if "VERDICT: THIẾU" in rl or "VERDICT:THIẾU" in rl or "VERDICT: THIEU" in rl:
-                        last_evaluator_verdict = "THIEU"
-                    elif "VERDICT: ĐỦ" in rl or "VERDICT:ĐỦ" in rl or "VERDICT: DU" in rl:
-                        last_evaluator_verdict = "DU"
-                    else:
-                        last_evaluator_verdict = "UNCLEAR"
+                    last_evaluator_verdict = gates.classify_evaluator_verdict(result)
 
                 tool_results.append({
                     "toolResult": {
@@ -442,10 +404,8 @@ async def _run_loop(
                     # kill/free-a-port loop: pkill→lsof→fuser→ps→/proc...) slips past the
                     # exact-input check above. Detect by INTENT keyword, not exact input.
                     if tool_name == "shell_exec":
-                        cmd_l = str(tool_input.get("command", "")).lower()
-                        intent = None
-                        if any(k in cmd_l for k in ("pkill", "lsof", "fuser", "kill ", "kill$", "kill -", "/proc/net/tcp", "address already in use")) or ("8080" in cmd_l and ("kill" in cmd_l or "pid" in cmd_l or "netstat" in cmd_l or "ss -" in cmd_l)):
-                            intent = "kill_or_free_port"
+                        intent = "kill_or_free_port" if gates.detect_kill_port_intent(
+                            str(tool_input.get("command", ""))) else None
                         if intent:
                             ic = f"intent:{intent}"
                             tool_sig_counts[ic] = tool_sig_counts.get(ic, 0) + 1
@@ -619,19 +579,8 @@ def _extract_text(content_blocks: list) -> str:
 
 
 def _looks_like_faked_tool_call(text: str) -> bool:
-    """Detect when the model WROTE a tool call as text instead of emitting a real
-    toolUse block (so nothing executed). Markers: an XML-ish <tool_use> tag, or a
-    JSON object naming a tool + its args inline in the prose."""
-    if not text:
-        return False
-    t = text.lower()
-    if "<tool_use" in t or "</tool_use" in t or "<tool_call" in t:
-        return True
-    # JSON-style fake: {"name": "...", "input": {...}} or {"tool": ...}
-    import re as _re
-    if _re.search(r'\{\s*"(name|tool)"\s*:\s*"[a-z_]+"\s*,\s*"(input|arguments|parameters)"\s*:', t):
-        return True
-    return False
+    """Tool call written as text instead of a real toolUse block. See gates."""
+    return gates.looks_like_faked_tool_call(text)
 
 
 def extract_last_agent_text(messages: list[dict]) -> str:
