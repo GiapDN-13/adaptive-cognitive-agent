@@ -72,11 +72,18 @@ class Tracer:
         msg = dict(msg or {})
         self.events.append({"t": round(time.time()-self.t0, 1), **msg})
         if msg.get("type") == "agent_question" and self._sid:
-            from app.agent.loop import handle_user_response
             ans = auto_answer(msg.get("question", ""))
             self.events.append({"t": round(time.time()-self.t0,1), "type":"user_answer","content":ans})
-            await asyncio.sleep(0.3)
-            await handle_user_response(self._sid, ans)
+            # trả lời SAU khi _wait_for_user_response đăng ký pending event (xem trace_run.py)
+            asyncio.create_task(self._answer_later(ans))
+
+    async def _answer_later(self, ans: str):
+        from app.agent.loop import handle_user_response, _pending_responses
+        for _ in range(100):
+            if self._sid in _pending_responses:
+                break
+            await asyncio.sleep(0.1)
+        await handle_user_response(self._sid, ans)
 
 
 def _read_host_creds():

@@ -51,14 +51,25 @@ class Tracer:
         msg = dict(msg or {})
         self.events.append({"t": round(time.time() - self.t0, 1), **msg})
         # Khi agent hỏi -> tự trả lời (mô phỏng user) để loop chạy tiếp.
+        # QUAN TRỌNG: phải trả lời SAU khi handle_ask_user gọi _wait_for_user_response
+        # (đăng ký _pending_responses). ws_send (chính __call__ này) được AWAIT TRƯỚC
+        # _wait_for_user_response, nên nếu trả lời ngay tại đây thì event chưa tồn tại →
+        # set bị mất → agent chờ tới timeout 10' rồi tưởng "user im lặng". Dùng
+        # create_task để câu trả lời bắn sau khi ws_send return + wait đã đăng ký.
         if msg.get("type") == "agent_question" and self._session_id:
-            from app.agent.loop import handle_user_response
             ans = auto_answer(msg.get("question", ""))
             self.events.append({"t": round(time.time() - self.t0, 1),
                                 "type": "user_answer", "content": ans})
-            # tra loi sau 1 nhip de loop kip dang ky _pending_responses
-            await asyncio.sleep(0.3)
-            await handle_user_response(self._session_id, ans)
+            asyncio.create_task(self._answer_later(ans))
+
+    async def _answer_later(self, ans: str):
+        from app.agent.loop import handle_user_response, _pending_responses
+        # Chờ tới khi _wait_for_user_response đã đăng ký pending event cho session.
+        for _ in range(100):  # tối đa ~10s
+            if self._session_id in _pending_responses:
+                break
+            await asyncio.sleep(0.1)
+        await handle_user_response(self._session_id, ans)
 
 
 async def main():
@@ -231,4 +242,5 @@ def render(task, session, events, workspace_listing, elapsed):
     return "\n".join(L)
 
 
-asyncio.run(main())
+if __name__ == "__main__":
+    asyncio.run(main())
