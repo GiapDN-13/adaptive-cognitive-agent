@@ -32,6 +32,121 @@ def _get_llm():
         _llm_client = create_llm_client()
     return _llm_client
 
+
+_GREETING_PREFIXES = (
+    "xin chào", "chào ", "chào!", "hi", "hello", "helo", "alo", "ê", "hey",
+    "cảm ơn", "thanks", "thank you", "ok", "oke", "okay", "test", "ping",
+)
+
+
+def _latest_task_request(session) -> str:
+    """Find the user's actual TASK message (verbatim) to hand the blind evaluator,
+    so it judges the product against what was really asked — not a greeting.
+
+    The bug this guards against: in a multi-turn chat that opens with "Xin chào",
+    the agent picked messages[0] ("Xin chào") as original_request, so the judge
+    compared a whole RAG build against a greeting and (correctly, but uselessly)
+    ruled THIEU. We scan user turns newest→oldest and skip pure greetings/trivia,
+    returning the first substantive request. Falls back to the last user turn."""
+    last_user = ""
+    for m in reversed(getattr(session, "messages", []) or []):
+        if m.get("role") != "user":
+            continue
+        content = m.get("content", "")
+        if isinstance(content, list):
+            content = " ".join(
+                b.get("text", "") for b in content if isinstance(b, dict) and "text" in b
+            )
+        text = str(content).strip()
+        if not text:
+            continue
+        if not last_user:
+            last_user = text
+        low = text.lower()
+        is_greeting = len(text) < 30 and any(low.startswith(p) for p in _GREETING_PREFIXES)
+        if not is_greeting:
+            return text
+    return last_user
+
+
+def _is_transient_server_error(e: Exception) -> bool:
+    """Detect transient AWS Bedrock server-side errors that boto3 already exhausted
+    its own retries on (InternalServerException, ServiceUnavailable, ModelNotReady,
+    5xx, throttling). These are NOT our fault and NOT fatal — waiting a few seconds
+    and resending the SAME request usually succeeds. Distinct from credential expiry
+    (handled separately) and from oversized-context stalls (RuntimeError path)."""
+    s = f"{type(e).__name__}: {e}".lower()
+    return any(
+        marker in s
+        for marker in (
+            "internalserver",
+            "serviceunavailable",
+            "service unavailable",
+            "modelnotready",
+            "model not ready",
+            "modeltimeout",
+            "throttling",
+            "too many requests",
+            "503",
+            "500",
+            "reached max retries",
+        )
+    )
+
+
+def _is_expired_token(e: Exception) -> bool:
+    """Detect AWS STS expired/invalid-token errors. STS temporary creds (ASIA…)
+    expire ~hourly; when they do, Bedrock raises ExpiredTokenException (or an
+    UnrecognizedClientException / 'security token' message). We treat these as a
+    PAUSE-able condition, not a fatal error, so the user can paste a fresh token
+    without losing the in-flight task."""
+    s = f"{type(e).__name__}: {e}".lower()
+    return any(
+        marker in s
+        for marker in (
+            "expiredtoken",
+            "the security token included in the request is expired",
+            "security token",
+            "unrecognizedclient",
+            "invalidsignatureexception",
+        )
+    )
+
+
+async def _pause_for_fresh_credentials(session_id: str, ws_send: Callable) -> bool:
+    """AWS creds expired mid-task. Instead of crashing (which would force a
+    backend recreate and lose context), pause and ask the user to paste a fresh
+    token into the mounted ~/.aws/credentials, then click Continue. On Continue
+    we rebuild the boto3 client so it reads the new token — no restart.
+
+    Returns True if the user signalled to continue, False on timeout/cancel.
+    Reuses the existing agent_question → user_response channel (no frontend change).
+    """
+    await ws_send({
+        "type": "agent_question",
+        "question": (
+            "⏸️ Token AWS đã hết hạn. Hãy dán token mới vào ~/.aws/credentials "
+            "(profile [default]), rồi bấm \"Tiếp tục\" để tôi chạy tiếp đúng chỗ "
+            "đang dở — KHÔNG mất context."
+        ),
+        "options": ["Tiếp tục"],
+    })
+    await ws_send({"type": "agent_status", "tool": "thinking", "detail": "chờ token AWS mới..."})
+    # Give the user a long window (15 min) to fetch + paste a new token.
+    resp = await _wait_for_user_response(session_id, timeout=900)
+    if resp in ("(no response - timeout)", "(cancelled)") or _cancel_flags.get(session_id):
+        return False
+    # Rebuild the client so the freshly-pasted token takes effect.
+    try:
+        client = _get_llm()
+        if hasattr(client, "reload_credentials"):
+            client.reload_credentials()
+        logger.info(f"[{session_id[:8]}] credentials reloaded after expiry — resuming")
+    except Exception:
+        logger.exception(f"[{session_id[:8]}] failed to reload credentials")
+        return False
+    return True
+
 # Pending approvals/responses keyed by request_id (not session_id)
 _pending_approvals: dict[str, asyncio.Event] = {}
 _approval_results: dict[str, dict] = {}
@@ -214,6 +329,11 @@ async def _run_loop(
                     and "spawn_evaluator" not in tools_used_ever
                     and not evaluator_gate_nudged):
                 evaluator_gate_nudged = True
+                task_req = _latest_task_request(session)
+                task_hint = (
+                    f"\nYÊU CẦU CẦN NGHIỆM THU (nguyên văn lượt giao việc thực chất — "
+                    f"truyền ĐÚNG chuỗi này vào original_request, KHÔNG lấy lời chào): \"{task_req[:400]}\""
+                ) if task_req else ""
                 messages.append({"role": "assistant", "content": content_blocks})
                 messages.append({"role": "user", "content": [{"text": (
                     "[SYSTEM — CỔNG NGHIỆM THU: bạn sắp báo 'hoàn thành' một sản phẩm đã BUILD "
@@ -221,7 +341,8 @@ async def _run_loop(
                     "`spawn_evaluator` (giám khảo độc lập, model mạnh, tự điều tra trên sản phẩm thật) "
                     "với original_request (nguyên văn yêu cầu gốc), product (đường dẫn/cách chạy), và "
                     "data_location (file thật). Nếu verdict THIẾU → làm tiếp rồi gọi lại. Chỉ báo hoàn "
-                    "thành sau khi giám khảo phán ĐỦ. Gọi spawn_evaluator NGAY bây giờ.]"
+                    "thành sau khi giám khảo phán ĐỦ. Gọi spawn_evaluator NGAY bây giờ."
+                    + task_hint + "]"
                 )}]})
                 continue
             # Gate 2 (T8): đã gọi giám khảo nhưng verdict THIẾU → CHẶN báo cáo, ép làm
@@ -580,6 +701,50 @@ async def _retry_after_stall(
     return None
 
 
+async def _call_llm_with_expiry_pause(
+    messages: list[dict],
+    system_prompt: str,
+    tools_list: list,
+    ws_send: Callable,
+    cancel_event: threading.Event | None,
+    session_id: str,
+    force_model: str | None = None,
+) -> dict:
+    """Wrap _call_llm so transient failures recover instead of crashing the task:
+      • ExpiredTokenException → pause for a fresh token, reload client, retry.
+      • InternalServerException / 5xx / throttling (Bedrock server hiccup) → wait
+        with exponential backoff, retry the SAME request (boto3 already exhausted
+        its own retries, but the error is transient on AWS's side, not ours).
+    Oversized-context stalls (RuntimeError) still propagate to _retry_after_stall."""
+    expired_retries = 0
+    server_retries = 0
+    while True:
+        try:
+            return await _call_llm(
+                messages, system_prompt, tools_list,
+                ws_send=ws_send, cancel_event=cancel_event, force_model=force_model,
+            )
+        except (asyncio.CancelledError, asyncio.TimeoutError, RuntimeError):
+            raise
+        except Exception as e:
+            if _is_expired_token(e) and expired_retries < 3 and not _cancel_flags.get(session_id):
+                expired_retries += 1
+                logger.warning(f"[{session_id[:8]}] AWS token expired mid-call — pausing for fresh creds (attempt {expired_retries})")
+                if await _pause_for_fresh_credentials(session_id, ws_send):
+                    continue  # retry same request with reloaded client
+            if _is_transient_server_error(e) and server_retries < 4 and not _cancel_flags.get(session_id):
+                server_retries += 1
+                backoff = min(2 ** server_retries, 20)  # 2,4,8,16,20s
+                logger.warning(f"[{session_id[:8]}] Bedrock transient server error — retry {server_retries}/4 after {backoff}s: {type(e).__name__}")
+                await ws_send({"type": "agent_status", "tool": "thinking", "detail": f"Bedrock quá tải, thử lại ({server_retries}/4)..."})
+                try:
+                    await asyncio.sleep(backoff)
+                except asyncio.CancelledError:
+                    raise
+                continue  # retry same request after backoff
+            raise
+
+
 async def _call_llm_with_continuation(
     messages: list[dict],
     system_prompt: str,
@@ -598,7 +763,9 @@ async def _call_llm_with_continuation(
             break
 
         try:
-            response = await _call_llm(messages, system_prompt, tools_list, ws_send=ws_send, cancel_event=cancel_event, force_model=force_model)
+            response = await _call_llm_with_expiry_pause(
+                messages, system_prompt, tools_list, ws_send, cancel_event, session_id, force_model
+            )
         except RuntimeError as e:
             if "stalled" in str(e) or "timeout" in str(e).lower():
                 # Bedrock stalls (no token for 120s) are usually TRANSIENT — capacity

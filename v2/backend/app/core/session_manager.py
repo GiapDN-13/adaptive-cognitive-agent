@@ -3,7 +3,7 @@ from datetime import datetime
 
 from app.config import settings
 from app.core.docker_manager import DockerManager
-from app.core.persistence import delete_session_messages, save_session_meta
+from app.core.persistence import delete_session_messages, load_session_messages, save_session_meta
 from app.models.session import ContainerConfig, Session
 
 
@@ -40,7 +40,12 @@ class SessionManager:
     async def rehydrate(self) -> int:
         """Sau khi backend restart (sessions in-memory mất), khôi phục lại session từ
         các container sandbox CÒN SỐNG. Container đặt tên smartagent-{id} + có label,
-        nên ta map lại được — tránh lỗi 404 'session not found' khi frontend giữ id cũ."""
+        nên ta map lại được — tránh lỗi 404 'session not found' khi frontend giữ id cũ.
+
+        QUAN TRỌNG: phải nạp lại CẢ `messages` từ persistence. Nếu bỏ qua, agent loop
+        chạy với history RỖNG → khi user gõ 'Tiếp tục' nó tưởng đây là phiên mới và
+        hỏi 'tiếp tục cái gì' (dù container vẫn còn sản phẩm dở). Frontend được replay
+        riêng để hiển thị, nhưng đó KHÔNG nạp vào session.messages của agent."""
         try:
             running = await self._docker.list_sandbox_containers()
         except Exception:
@@ -50,11 +55,16 @@ class SessionManager:
             sid = c["session_id"]
             if sid in self._sessions:
                 continue
+            try:
+                messages = await load_session_messages(sid)
+            except Exception:
+                messages = []
             self._sessions[sid] = Session(
                 id=sid,
                 container_id=c["container_id"],
                 container_config=ContainerConfig(image=settings.sandbox_image),
                 app_port=c.get("app_port"),
+                messages=messages,
             )
             n += 1
         return n

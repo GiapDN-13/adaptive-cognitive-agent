@@ -1,10 +1,44 @@
 import asyncio
+import configparser
 import json
+import os
 import threading
 from dataclasses import dataclass
 from typing import AsyncGenerator
 
 from app.config import settings
+
+
+def _resolve_aws_creds() -> tuple[str, str, str]:
+    """Resolve AWS credentials, preferring the LIVE shared-credentials file
+    (the mounted ~/.aws/credentials) over the env vars frozen into the container
+    at `compose up`. This is what lets a freshly-pasted STS token take effect
+    WITHOUT recreating the backend — we just rebuild the boto3 client and it
+    reads the new token straight from the file.
+
+    Falls back to settings (env) when the file is absent or incomplete.
+    """
+    cred_file = os.environ.get("AWS_SHARED_CREDENTIALS_FILE", "/root/.aws/credentials")
+    profile = os.environ.get("AWS_PROFILE", "default")
+    try:
+        if os.path.exists(cred_file):
+            cp = configparser.ConfigParser()
+            cp.read(cred_file)
+            if cp.has_section(profile):
+                sec = cp[profile]
+                ak = (sec.get("aws_access_key_id") or "").strip()
+                sk = (sec.get("aws_secret_access_key") or "").strip()
+                tok = (sec.get("aws_session_token") or "").strip()
+                if ak and sk:
+                    return ak, sk, tok
+    except Exception:
+        # Any parse error → fall back to env so we never hard-fail on a bad file.
+        pass
+    return (
+        settings.aws_access_key_id,
+        settings.aws_secret_access_key,
+        settings.aws_session_token,
+    )
 
 
 # Models that deprecated the `temperature` inference param (Opus 4.7+).
@@ -34,14 +68,19 @@ class LLMResponse:
 
 class BedrockClient:
     def __init__(self):
+        self._build_client()
+
+    def _build_client(self):
         import boto3
         from botocore.config import Config
+
+        ak, sk, tok = _resolve_aws_creds()
 
         # Pass session token only if present (required for STS/temporary creds,
         # which start with ASIA). Permanent keys (AKIA) leave it empty.
         client_kwargs = dict(
-            aws_access_key_id=settings.aws_access_key_id,
-            aws_secret_access_key=settings.aws_secret_access_key,
+            aws_access_key_id=ak,
+            aws_secret_access_key=sk,
             region_name=settings.aws_region,
             # adaptive retry mode adds exponential backoff + client-side throttling
             # so transient ThrottlingException/5xx are retried instead of bubbling up.
@@ -51,10 +90,17 @@ class BedrockClient:
                 retries={"max_attempts": 4, "mode": "adaptive"},
             ),
         )
-        if settings.aws_session_token:
-            client_kwargs["aws_session_token"] = settings.aws_session_token
+        if tok:
+            client_kwargs["aws_session_token"] = tok
 
         self._client = boto3.client("bedrock-runtime", **client_kwargs)
+
+    def reload_credentials(self):
+        """Rebuild the underlying boto3 client so it picks up freshly-pasted
+        credentials from the mounted ~/.aws/credentials. Called after an
+        ExpiredTokenException once the user supplies a new token — no restart,
+        so the in-memory session (and its context) survives."""
+        self._build_client()
 
     async def converse(
         self,

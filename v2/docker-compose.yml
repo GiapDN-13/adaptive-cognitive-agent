@@ -22,6 +22,11 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./backend/app:/app/app
       - ./backend/vendor:/app/vendor
+      # Mount host AWS credentials LIVE (read-only). When the STS token expires,
+      # paste a fresh one into the host ~/.aws/credentials; the backend reads it
+      # on the next call (after Continue) — no recreate, no lost context.
+      # Override AWS_CRED_DIR in v2/.env if your ~/.aws lives elsewhere.
+      - ${AWS_CRED_DIR:-/c/Users/OS/.aws}:/root/.aws:ro
     depends_on:
       sandbox-build:
         condition: service_completed_successfully

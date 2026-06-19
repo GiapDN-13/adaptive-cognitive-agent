@@ -122,6 +122,11 @@ async def websocket_endpoint(
         try:
             from app.core.persistence import load_session_messages
             replay_messages = await load_session_messages(session_id)
+            # Nạp lại vào session in-memory để AGENT (không chỉ frontend) có context.
+            # Nếu chỉ replay cho UI mà bỏ trống session.messages, agent sẽ hỏi
+            # "tiếp tục cái gì" khi user gõ 'Tiếp tục'.
+            if replay_messages:
+                session.messages = list(replay_messages)
         except Exception:
             replay_messages = []
     if replay_messages:
