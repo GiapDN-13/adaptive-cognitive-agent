@@ -27,6 +27,9 @@ services:
       # on the next call (after Continue) — no recreate, no lost context.
       # Override AWS_CRED_DIR in v2/.env if your ~/.aws lives elsewhere.
       - ${AWS_CRED_DIR:-/c/Users/OS/.aws}:/root/.aws:ro
+      # Persist agent data (session messages + trace reports) to host so long
+      # runs survive a backend/container restart instead of vanishing.
+      - ./backend/_data:/app/data
     depends_on:
       sandbox-build:
         condition: service_completed_successfully

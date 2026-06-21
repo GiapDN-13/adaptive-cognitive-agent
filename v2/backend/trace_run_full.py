@@ -64,18 +64,45 @@ def auto_answer(q: str) -> str:
     )
 
 
+LIVE_EVENTS = "/app/data/trace_events_full.json"
+
 class Tracer:
     def __init__(self):
         self.events = []; self.t0 = time.time(); self._sid = None
     def bind(self, sid): self._sid = sid
+    def _flush(self):
+        # Ghi LIEN TUC sau moi event -> backend chet giua chung van con du lieu.
+        try:
+            os.makedirs("/app/data", exist_ok=True)
+            with open(LIVE_EVENTS, "w", encoding="utf-8") as f:
+                json.dump(self.events, f, ensure_ascii=False, indent=1)
+        except Exception:
+            pass
     async def __call__(self, msg: dict):
         msg = dict(msg or {})
         self.events.append({"t": round(time.time()-self.t0, 1), **msg})
+        self._flush()
         if msg.get("type") == "agent_question" and self._sid:
             ans = auto_answer(msg.get("question", ""))
             self.events.append({"t": round(time.time()-self.t0,1), "type":"user_answer","content":ans})
+            self._flush()
             # trả lời SAU khi _wait_for_user_response đăng ký pending event (xem trace_run.py)
             asyncio.create_task(self._answer_later(ans))
+        # Auto-DUYỆT mọi approval (giữ quyền red-team: build cần chạy lệnh thật).
+        if msg.get("type") == "approval_request":
+            rid = msg.get("request_id")
+            self.events.append({"t": round(time.time()-self.t0,1), "type":"user_approval",
+                                "request_id": rid, "approved": True})
+            self._flush()
+            asyncio.create_task(self._approve_later(rid))
+
+    async def _approve_later(self, rid):
+        from app.agent.loop import handle_approval, _pending_approvals
+        for _ in range(100):
+            if rid in _pending_approvals:
+                break
+            await asyncio.sleep(0.1)
+        await handle_approval(self._sid, {"request_id": rid, "approved": True})
 
     async def _answer_later(self, ans: str):
         from app.agent.loop import handle_user_response, _pending_responses
