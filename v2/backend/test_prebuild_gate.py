@@ -29,6 +29,12 @@ async def fake_cont(messages, system_prompt, tools_list, ws_send, cancel_event, 
     stop, blocks = TURNS[min(i, len(TURNS) - 1)]
     return stop, blocks, messages
 
+# Mock LLM-judge: lần 1 (chưa think gì) -> CHUA_DAT; sau khi đã think -> DAT.
+async def fake_gate(thinking_text, session_id):
+    if "trade-off" in (thinking_text or "").lower() or "vs" in (thinking_text or "").lower():
+        return "DAT", "-"
+    return "CHUA_DAT", "Thiếu so sánh ≥2 phương án có chấm điểm."
+
 # Bắt write_file có thực thi không
 _executed = {"write_file": 0}
 async def fake_execute_tool(session, tool_name, tool_input, ws_send, cancel_event):
@@ -44,6 +50,7 @@ async def ws(msg):
 async def main():
     loop._call_llm_with_continuation = fake_cont
     loop._execute_tool = fake_execute_tool
+    loop._prebuild_quality_gate = fake_gate
     sess = types.SimpleNamespace(id="gatetest", container_id="x", messages=[
         {"role": "user", "content": "Xây RAG chatbot doanh nghiệp 1000 user, build luôn."}])
     loop._session_generation["gatetest"] = 0

@@ -68,6 +68,58 @@ def _is_transient_server_error(e: Exception) -> bool:
     return gates.is_transient_server_error(e)
 
 
+_PREBUILD_JUDGE_PROMPT = """Bạn là bộ chấm CỔNG TRƯỚC-KHI-BUILD. Đọc chuỗi suy nghĩ của một
+agent vừa định bắt tay XÂY (write_file) một hệ thống. Chấm xem tư duy ĐÃ ĐỦ CHẤT LƯỢNG để
+được phép build chưa, theo 2 trụ BẮT BUỘC:
+
+A. ƯỚC QUY MÔ ĐỊNH LƯỢNG: có suy ra tổng khối lượng/tải bằng con số từ ngữ cảnh (không phán
+   "nhỏ/lớn" suông), và tách trục "đồng thời" khỏi trục "khối lượng dữ liệu" khi việc đó
+   liên quan.
+B. ĐA NHÁNH CÓ CHẤM ĐIỂM: với ÍT NHẤT MỘT quyết định kiến trúc quan trọng, có sinh ≥2 phương
+   án, SO SÁNH trade-off theo tiêu chí, và chọn có lý do dựa trên so sánh (không liệt kê rồi
+   chọn bừa "cho đơn giản/đủ dùng").
+
+Khoan dung hợp lý: agent KHÔNG cần hoàn hảo, chỉ cần THỰC SỰ có làm 2 trụ ở mức nghiêm túc.
+Nếu task quá nhỏ/không phải thiết kế hệ thống (vd sửa 1 hàm) → coi như ĐẠT.
+
+Trả ĐÚNG 2 dòng:
+VERDICT: DAT | CHUA_DAT
+FEEDBACK: <nếu CHUA_DAT, nêu NGẮN GỌN trụ nào thiếu và cần bổ sung gì cụ thể; nếu DAT để "-">
+"""
+
+
+async def _prebuild_quality_gate(thinking_text: str, session_id: str) -> tuple[str, str]:
+    """LLM-judge cho cổng pre-build (T10): chấm chuỗi suy nghĩ đã đủ chất lượng (ước quy
+    mô + đa nhánh có chấm điểm) chưa. Trả (verdict, feedback) với verdict ∈ {DAT, CHUA_DAT}.
+    Fail-open: lỗi/judge không rõ → DAT (không chặn oan, tránh treo task vì sự cố hạ tầng)."""
+    if len((thinking_text or "").strip()) < 80:
+        return "CHUA_DAT", "Chuỗi suy nghĩ quá ngắn — chưa thấy phân tích quy mô hay so sánh phương án nào."
+    try:
+        client = _get_llm()
+        heavy = getattr(settings, "bedrock_heavy_model", "") or None
+        resp = await asyncio.wait_for(
+            client.converse(
+                messages=[{"role": "user", "content": [{"text": _PREBUILD_JUDGE_PROMPT + "\n\n=== SUY NGHĨ ===\n" + thinking_text[-8000:]}]}],
+                system="Bộ chấm khắt khe nhưng công bằng. Trả đúng 2 dòng VERDICT/FEEDBACK.",
+                max_tokens=400,
+                model=heavy,
+            ),
+            timeout=60,
+        )
+        out = "".join(b.get("text", "") for b in resp.get("output", {}).get("message", {}).get("content", []))
+        up = out.upper()
+        if "CHUA_DAT" in up or "CHƯA ĐẠT" in up:
+            fb = ""
+            for line in out.splitlines():
+                if "FEEDBACK" in line.upper():
+                    fb = line.split(":", 1)[-1].strip()
+            return "CHUA_DAT", (fb or "Bổ sung: ước quy mô định lượng + so sánh ≥2 phương án có chấm điểm.")
+        return "DAT", "-"
+    except Exception:
+        logger.exception(f"[{session_id[:8]}] prebuild gate judge error — fail-open (cho qua)")
+        return "DAT", "-"
+
+
 def _is_expired_token(e: Exception) -> bool:
     """AWS STS expired/invalid-token → pause for fresh token. See gates."""
     return gates.is_expired_token(e)
@@ -278,6 +330,13 @@ async def _run_loop(
         if _stale():
             break
 
+        # T10: gom MỌI text suy nghĩ của assistant (kể cả khi agent suy bằng văn xuôi
+        # thay vì gọi tool `think`) để cổng pre-build soi đúng — tránh chặn nhầm khi
+        # agent đã đào sâu nhưng không dùng tool think.
+        _turn_text = _extract_text(content_blocks)
+        if _turn_text:
+            thinking_text_so_far += "\n" + _turn_text
+
         if stop_reason == "end_turn":
             text = _extract_text(content_blocks)
             # Anti "fake tool call": some models (esp. Opus on long/complex prompts)
@@ -365,34 +424,30 @@ async def _run_loop(
                 if tool_name == "think" and isinstance(tool_input, dict):
                     thinking_text_so_far += "\n" + str(tool_input.get("thought", ""))
 
-                # T10 PRE-BUILD GATE: chặn lần BUILD đầu tiên (write_file/create_tool) nếu
-                # chuỗi think CHƯA thể hiện đủ 2 trụ (ước quy mô + đa nhánh). Ép quay lại
-                # think. Chỉ áp cho agent chính, task build thật, và cap để không deadlock.
+                # T10 PRE-BUILD GATE (LLM-judge): chặn lần BUILD đầu tiên nếu chuỗi suy
+                # nghĩ CHƯA đạt chất lượng (đa nhánh + so trade-off + chấm điểm + ước quy
+                # mô). Heuristic từ khóa không đủ (ép "đi qua cửa" chứ không ép chất lượng)
+                # — nên dùng 1 LLM nhẹ chấm như T7/T8. Cap để không deadlock.
                 _build_before = (tools_used_ever - {tool_name}) & {"write_file", "create_tool"}
                 if (not is_subagent
                         and tool_name in ("write_file", "create_tool")
                         and not _build_before
                         and prebuild_gate_blocks < MAX_PREBUILD_BLOCKS):
-                    gaps = gates.prebuild_thinking_gaps(thinking_text_so_far)
-                    if gaps:
+                    _verdict, _feedback = await _prebuild_quality_gate(thinking_text_so_far, session.id)
+                    if _verdict == "CHUA_DAT":
                         prebuild_gate_blocks += 1
-                        gap_msg = {
-                            "scale": "• ƯỚC QUY MÔ định lượng: tổng khối lượng dữ liệu (suy từ số người × số file × số phòng → bao nhiêu nghìn tài liệu/chunks), TÁCH khỏi trục số truy vấn đồng thời.",
-                            "branch": "• TƯ DUY ĐA NHÁNH: với ít nhất 1 quyết định kiến trúc (vd vector store / retrieval), sinh ≥2 phương án, so trade-off theo tiêu chí ưu tiên, rồi chọn có lý do.",
-                        }
-                        missing = "\n".join(gap_msg[g] for g in gaps)
                         await ws_send({"type": "agent_status", "tool": "thinking", "detail": f"pre-build gate ({prebuild_gate_blocks}/{MAX_PREBUILD_BLOCKS})"})
-                        # Không thực thi build; trả nudge buộc think trước.
+                        # Không thực thi build; trả nudge (kèm feedback cụ thể của bộ chấm).
                         tool_results.append({
                             "toolResult": {
                                 "toolUseId": tool_id,
                                 "content": [{"text": (
                                     "[SYSTEM — CỔNG TRƯỚC-KHI-BUILD: chưa được tạo file/công cụ. "
-                                    "Bạn sắp BUILD nhưng chuỗi suy nghĩ CHƯA thể hiện đủ các trụ tư duy "
-                                    "bắt buộc (Bước 0 + 1.5). CÒN THIẾU:\n" + missing + "\n"
-                                    "Hãy dùng `think` bổ sung đúng (các) phần còn thiếu trên — NGẮN GỌN, "
-                                    "cụ thể bằng con số/tiêu chí — RỒI mới write_file. Đây là cổng 1 lần, "
-                                    "đừng bỏ qua bằng cách lặp lại lời chung chung.]"
+                                    "Một bộ chấm độc lập thấy chuỗi suy nghĩ của bạn CHƯA ĐẠT chuẩn tư duy "
+                                    "trước khi build. CỤ THỂ CẦN BỔ SUNG:\n" + _feedback + "\n"
+                                    "Hãy dùng `think` xử lý ĐÚNG các điểm trên — bằng CON SỐ + TIÊU CHÍ + "
+                                    "SO SÁNH ≥2 PHƯƠNG ÁN có chấm điểm — RỒI mới write_file. Không lặp lại "
+                                    "lời chung chung; phải thực sự so sánh và chấm điểm.]"
                                 )}],
                             }
                         })
