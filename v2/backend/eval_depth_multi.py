@@ -71,7 +71,7 @@ async def one_run(idx):
     # ép think nhiều: max_tokens cao
     r = await c.converse(
         messages=[{"role": "user", "content": [{"text": TASK}]}],
-        system=sysp, max_tokens=6000, temperature=0.7,  # temp cao để thấy variance thật
+        system=sysp, max_tokens=6000, temperature=0.4,  # ĐÚNG temp production của agent (đo đúng điều kiện thật)
     )
     blocks = r.get("output", {}).get("message", {}).get("content", [])
     # gom mọi text + tool think input
