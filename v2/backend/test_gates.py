@@ -90,6 +90,13 @@ check("workspace note: empty -> None", gates.preexisting_workspace_note([]) is N
 check("workspace note: whitespace-only -> None", gates.preexisting_workspace_note(["", "  "]) is None)
 
 
+# ---- prebuild_thinking_gaps (T10 gate) ----
+check("prebuild: trống -> thiếu cả 2", gates.prebuild_thinking_gaps("build now") == ["scale", "branch"])
+check("prebuild: có scale, thiếu branch", gates.prebuild_thinking_gaps("corpus ~nghìn tài liệu, 30 đồng thời") == ["branch"])
+check("prebuild: có branch, thiếu scale", gates.prebuild_thinking_gaps("ChromaDB vs Qdrant trade-off") == ["scale"])
+check("prebuild: đủ cả 2 -> rỗng", gates.prebuild_thinking_gaps("khối lượng nghìn+ chunks; so sánh ChromaDB vs Qdrant theo trade-off") == [])
+
+
 # ---- summary ----
 n = len(results); p = sum(1 for _, ok in results if ok)
 print(f"\n{'='*48}\nKET QUA: {p}/{n} PASS")

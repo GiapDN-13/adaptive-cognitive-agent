@@ -82,6 +82,37 @@ def classify_evaluator_verdict(result: str) -> str:
     return "UNCLEAR"
 
 
+def prebuild_thinking_gaps(thinking_text: str) -> list[str]:
+    """Kiểm tra chuỗi think trước khi BUILD đã thể hiện 2 trụ tư duy chưa (T10 gate):
+      - 'scale'  : có ước QUY MÔ định lượng (tách trục đồng-thời vs khối-lượng dữ liệu,
+                   hoặc nói tới tổng tài liệu/chunks/nghìn+).
+      - 'branch' : có so SÁNH ≥2 phương án cho ít nhất 1 quyết định kiến trúc.
+    Trả về danh sách trụ CÒN THIẾU (rỗng = đủ). PURE — chỉ soi text, không phán đoán
+    đúng/sai nội dung (việc đó là của giám khảo); chỉ đảm bảo agent ĐÃ ĐI qua bước đó.
+
+    Heuristic có chủ đích RỘNG RÃI (chống deadlock): chỉ cần có DẤU HIỆU đã suy, không
+    đòi suy hoàn hảo — gate là 'ép đi qua cửa', chất lượng để rubric/giám khảo đo."""
+    t = (thinking_text or "").lower()
+    gaps = []
+    # Trụ QUY MÔ: bất kỳ dấu hiệu định lượng tải/khối lượng.
+    scale_markers = (
+        "đồng thời", "concurrent", "khối lượng", "tổng tài liệu", "tổng số",
+        "nghìn", "ngàn", "chunks", "req/s", "throughput", "quy mô", "scale",
+        "bao nhiêu", "số file", "số người", "dung lượng", "qps", "rps",
+    )
+    if not any(m in t for m in scale_markers):
+        gaps.append("scale")
+    # Trụ ĐA NHÁNH: dấu hiệu so sánh ≥2 phương án.
+    branch_markers = (
+        " vs ", "phương án", "nhánh", "option", "lựa chọn", "so sánh", "trade-off",
+        "tradeoff", "đánh đổi", "thay vì", "hoặc dùng", "cách 1", "cách 2",
+        "cách a", "cách b", "alternativ",
+    )
+    if not any(m in t for m in branch_markers):
+        gaps.append("branch")
+    return gaps
+
+
 def detect_kill_port_intent(command: str) -> bool:
     """True if a shell command is (yet another) attempt to kill a process / free a
     port — the slim-container loop that slips past exact-input plateau detection

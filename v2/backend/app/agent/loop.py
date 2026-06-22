@@ -253,6 +253,14 @@ async def _run_loop(
     last_evaluator_verdict = None          # None | "THIEU" | "DU" | "UNCLEAR"
     evaluator_thieu_blocks = 0
     MAX_THIEU_BLOCKS = 3
+    # T10 (PRE-BUILD gate): ổn định hóa chuỗi tư duy. Đo cho thấy agent đào sâu
+    # KHÔNG nhất quán (lúc 5/7 lúc 0/7) — vì prompt-only để agent "tùy hứng". Gate
+    # này CHẶN lần write_file/create_tool đầu tiên của task build NẾU chuỗi think
+    # chưa thể hiện đủ: (a) ước QUY MÔ định lượng, (b) so ≥2 NHÁNH cho 1 quyết định.
+    # Ép quay lại think rồi mới cho build. Cap 2 lần để không deadlock.
+    thinking_text_so_far = ""              # gom mọi 'thought' của think để soi gate
+    prebuild_gate_blocks = 0
+    MAX_PREBUILD_BLOCKS = 2
 
     responded = False
     for iteration in range(iter_budget):
@@ -353,6 +361,42 @@ async def _run_loop(
                 tool_input = tool_use.get("input", {})
                 tool_id = tool_use["toolUseId"]
                 tools_used_ever.add(tool_name)  # T7 gate: theo dõi tool đã dùng cả phiên
+                # T10: gom suy nghĩ (think.thought) để gate pre-build soi đã đào đủ chưa.
+                if tool_name == "think" and isinstance(tool_input, dict):
+                    thinking_text_so_far += "\n" + str(tool_input.get("thought", ""))
+
+                # T10 PRE-BUILD GATE: chặn lần BUILD đầu tiên (write_file/create_tool) nếu
+                # chuỗi think CHƯA thể hiện đủ 2 trụ (ước quy mô + đa nhánh). Ép quay lại
+                # think. Chỉ áp cho agent chính, task build thật, và cap để không deadlock.
+                _build_before = (tools_used_ever - {tool_name}) & {"write_file", "create_tool"}
+                if (not is_subagent
+                        and tool_name in ("write_file", "create_tool")
+                        and not _build_before
+                        and prebuild_gate_blocks < MAX_PREBUILD_BLOCKS):
+                    gaps = gates.prebuild_thinking_gaps(thinking_text_so_far)
+                    if gaps:
+                        prebuild_gate_blocks += 1
+                        gap_msg = {
+                            "scale": "• ƯỚC QUY MÔ định lượng: tổng khối lượng dữ liệu (suy từ số người × số file × số phòng → bao nhiêu nghìn tài liệu/chunks), TÁCH khỏi trục số truy vấn đồng thời.",
+                            "branch": "• TƯ DUY ĐA NHÁNH: với ít nhất 1 quyết định kiến trúc (vd vector store / retrieval), sinh ≥2 phương án, so trade-off theo tiêu chí ưu tiên, rồi chọn có lý do.",
+                        }
+                        missing = "\n".join(gap_msg[g] for g in gaps)
+                        await ws_send({"type": "agent_status", "tool": "thinking", "detail": f"pre-build gate ({prebuild_gate_blocks}/{MAX_PREBUILD_BLOCKS})"})
+                        # Không thực thi build; trả nudge buộc think trước.
+                        tool_results.append({
+                            "toolResult": {
+                                "toolUseId": tool_id,
+                                "content": [{"text": (
+                                    "[SYSTEM — CỔNG TRƯỚC-KHI-BUILD: chưa được tạo file/công cụ. "
+                                    "Bạn sắp BUILD nhưng chuỗi suy nghĩ CHƯA thể hiện đủ các trụ tư duy "
+                                    "bắt buộc (Bước 0 + 1.5). CÒN THIẾU:\n" + missing + "\n"
+                                    "Hãy dùng `think` bổ sung đúng (các) phần còn thiếu trên — NGẮN GỌN, "
+                                    "cụ thể bằng con số/tiêu chí — RỒI mới write_file. Đây là cổng 1 lần, "
+                                    "đừng bỏ qua bằng cách lặp lại lời chung chung.]"
+                                )}],
+                            }
+                        })
+                        continue  # bỏ qua thực thi tool này, sang block kế
 
                 tool_desc = tool_input.get("query") or tool_input.get("command") or tool_input.get("path") or ""
                 await ws_send({
