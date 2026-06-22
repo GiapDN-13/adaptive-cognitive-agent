@@ -86,31 +86,29 @@ Sản phẩm không chỉ "chạy được" mà còn được một bên độc 
 
 Sau lần trình bày đầu, có feedback rằng Agent còn "chỉ nhích, chưa tư duy đủ rộng" — cụ thể: giả định quy mô cho tiện ("corpus nhỏ"), chưa đào sâu xử lý nội dung file, và chưa cân nhắc nhiều phương án. Đối chiếu với tài liệu *"Phân tích Tư duy của AI"* (cơ chế Tree-of-Thoughts: sinh nhiều nhánh giải pháp, so sánh trade-off rồi mới chọn; và tự phản chiếu "Wait/Aha"), chúng tôi đã **biến phản hồi đó thành thước đo định lượng** rồi cải tiến có kiểm chứng.
 
-**Cách đo:** một "giám khảo" Opus độc lập chấm dòng suy nghĩ thật của Agent theo 5 tiêu chí:
+**Cách đo:** một "giám khảo" Opus độc lập chấm dòng suy nghĩ thật của Agent theo 7 tiêu chí (ánh xạ từ các cơ chế trong tài liệu):
 
-| Mã | Tiêu chí | Ý nghĩa |
-|----|----------|---------|
-| D1 | Suy luận quy mô định lượng | Tự nhân ra tổng tải từ ngữ cảnh (người × file), tách trục "đồng thời" khỏi "khối lượng dữ liệu" |
-| D2 | Đào sâu xử lý nội dung | Với dữ liệu bảng (Excel) đào tới ngữ nghĩa hàng/cột, không dừng ở "đọc được file" |
-| D3 | Phân rã + làm phần khó nhất trước | Chia bài toán con, xếp độ khó, đào phần khó trước |
-| D4 | Tư duy đa nhánh (Tree-of-Thoughts) | Sinh ≥2-3 phương án, so sánh trade-off, chọn có trọng số — không chọn nhánh tiện đầu tiên |
-| D5 | Tự phản chiếu / sửa sai giữa chừng | Tự nghi ngờ giả định của chính mình và đảo hướng ("Khoan đã…") |
+| Mã | Tiêu chí | Nguồn (tài liệu) |
+|----|----------|------------------|
+| D1 | Suy luận quy mô định lượng (người × file, tách trục đồng thời/khối lượng) | mục 1 |
+| D2 | Đào sâu xử lý nội dung (Excel: ngữ nghĩa hàng/cột) | mục 1 |
+| D3 | Phân rã + làm phần khó nhất trước | mục 1, 5 |
+| D4 | Tư duy đa nhánh (Tree-of-Thoughts) | mục 2.2 |
+| D5 | Tự phản chiếu / sửa sai giữa chừng (Wait/Aha) | mục 4.1 |
+| D6 | Chấm điểm có trọng số khi chọn nhánh (reward model) | mục 3.1 |
+| D7 | Biết khi mình không biết (Self-RAG / ranh giới tri thức) | mục 4.2 |
 
-**Kết quả đo trước → sau (cùng một bài toán, đo bằng giám khảo độc lập):**
+**Kết quả đo NHIỀU LẦN (trung thực — đo 4 lần cùng prompt, lấy tỉ lệ pass):**
 
-| Lần đo | D1 | D2 | D3 | D4 | D5 | Tổng |
-|--------|----|----|----|----|----|------|
-| Ban đầu (trước cải tiến) | ❌ | ✅ | ❌ | — | — | **1/3** |
-| Sau khi nâng "suy quy mô + phân rã" | ✅ | ✅ | ✅ | ❌ | ✅ | **4/5** |
-| Sau khi thêm tư duy đa nhánh (ToT) | ✅ | ✅ | ✅ | ✅ | ✅ | **5/5** |
+| Tiêu chí | D1 | D2 | D3 | D4 | D5 | D6 | D7 | TB |
+|----------|----|----|----|----|----|----|----|----|
+| Tỉ lệ pass / 4 lần | 50% | 50% | 50% | 25% | 25% | 0% | 25% | **2.2/7** |
 
-Các bằng chứng trích từ giám khảo (nguyên văn suy nghĩ Agent):
-- **D1** — *"design cho nghìn+ tài liệu"* (không còn "corpus nhỏ ~chục file").
-- **D2** — *"serialize từng hàng thành 'Cột1: giá trị1 | …' để mỗi hàng tự đầy đủ ngữ nghĩa, retrieve độc lập"*.
-- **D4** — *"ChromaDB (dễ nhưng concurrent write yếu) vs Qdrant (server-mode) vs pgvector → cho doanh nghiệp lâu dài cân nhắc Qdrant/pgvector"* (so sánh trade-off từng nhánh).
-- **D5** — *"Khoan đã — biến AWS_* không có trong sandbox dù yêu cầu nói đã có"* (tự phát hiện sai lệch, đảo hướng).
+> **Phát hiện quan trọng (đã sửa lại cho đúng):** khi đo 1 lần duy nhất, điểm dao động 0/7 → 5/7 cho **cùng một prompt** — tức kết quả 1 lần bị nhiễu nặng, không đáng tin. Đo 4 lần cho thấy năng lực tư duy hiện **CHƯA ỔN ĐỊNH**: có lần Agent đào rất sâu (5/7), có lần làm hời hợt (0/7). Đây là vấn đề lớn hơn việc "thiếu đề mục": các cơ chế tư duy đã được dạy qua prompt nhưng Agent **thực thi không nhất quán**.
 
-**Điểm cốt lõi:** mỗi lần có phản hồi về chất lượng tư duy, nó được chuyển thành tiêu chí đo (rubric D1–D5) chấm bằng giám khảo độc lập, cải tiến rồi đo lại để chứng minh tiến bộ — không sửa cảm tính.
+**Hướng khắc phục (đang triển khai):** giống cách đã làm thành công với khâu nghiệm thu (ép `spawn_evaluator` bằng cơ chế cứng trong vòng lặp, không chỉ bằng lời nhắc) — cần một cơ chế **bắt buộc** Agent đi đủ chuỗi tư duy (đào quy mô → đa nhánh → chấm điểm) trước khi được bắt tay xây dựng. Prompt-only đã chứng minh là chưa đủ để đạt độ ổn định cần thiết cho môi trường doanh nghiệp.
+
+**Điểm cốt lõi về phương pháp:** mỗi phản hồi về chất lượng tư duy được chuyển thành tiêu chí đo (rubric D1–D7), chấm bằng giám khảo độc lập **nhiều lần** để tách tín hiệu khỏi nhiễu — không kết luận vội từ một lần chạy may mắn.
 
 ---
 
@@ -122,7 +120,7 @@ Trên đúng một bài toán thực tế (RAG 1k users), Agent thể hiện tr�
 2. **Trung thực, không tự-mock** — thiếu đồ thật thì dừng lại hỏi, không demo bằng đồ giả.
 3. **Tự build sản phẩm thật** — 7 file code, dùng Bedrock thật, 63 lệnh thật, ~20 phút không cần can thiệp.
 4. **Tự kiểm thử + giám khảo độc lập nghiệm thu** — verify theo tiêu chí đo được + một giám khảo mù phán quyết và báo cáo giới hạn trung thực.
-5. **Tư duy đa nhánh (Tree-of-Thoughts) + tự phản chiếu** — sinh nhiều phương án, so sánh trade-off rồi mới chọn; tự nghi ngờ và sửa sai giữa chừng. Đo được: **1/3 → 5/5** qua các vòng cải tiến có kiểm chứng.
+5. **Tư duy đa nhánh (Tree-of-Thoughts) + tự phản chiếu** — đã dạy qua prompt (sinh nhiều phương án, so trade-off, tự nghi ngờ/sửa sai). Đo nhiều lần cho thấy năng lực này CÓ xuất hiện nhưng CHƯA ỔN ĐỊNH (trung bình 2.2/7, dao động 0–5/7) → đang chuyển sang cơ chế cứng để ép thực thi nhất quán (xem Phần 3).
 
 **Tài liệu đính kèm để kiểm chứng chi tiết:**
 - `trace_report.md` — toàn bộ trace lần 1 (Agent tư duy rồi dừng hỏi).
