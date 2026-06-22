@@ -17,8 +17,9 @@ TASK = (
     "(đăng ký; cao điểm ~30-50 đồng thời). Tài liệu mẫu THẬT đã có sẵn ở /workspace/docs "
     "(gồm PDF text, file Excel CSV, file Word text — mỗi phòng ban một file). "
     "Phân quyền theo 4 phòng: HR, Finance, Engineering, Admin (Admin xem tất cả). "
-    "AWS Bedrock credentials ĐÃ có trong môi trường sandbox (biến AWS_* + region us-east-1) — "
-    "DÙNG Bedrock THẬT (Claude cho generate, Titan/Cohere cho embedding). KHÔNG mock. "
+    "AWS Bedrock credentials ĐÃ có sẵn ở /root/.aws/credentials (profile default, region "
+    "us-east-1) — boto3 tự đọc, KHÔNG cần set env. DÙNG Bedrock THẬT (Claude cho generate, "
+    "Titan/Cohere cho embedding). KHÔNG mock. "
     "Hãy thiết kế, BUILD, tự verify, rồi gọi giám khảo mù nghiệm thu."
 )
 
@@ -53,8 +54,9 @@ DOCS = {
 def auto_answer(q: str) -> str:
     return (
         "Quyết hết để bạn build NGAY, không hỏi thêm: "
-        "(1) Quy mô: 1000 đăng ký, peak ~30-50 đồng thời → ChromaDB persistent là đủ. "
-        "(2) LLM/Embedding: DÙNG AWS Bedrock THẬT — creds đã có trong env sandbox (AWS_ACCESS_KEY_ID...), "
+        "(1) Quy mô: 1000 đăng ký, peak ~30-50 đồng thời, nhưng tài liệu doanh nghiệp sẽ tăng dần "
+        "(nghìn+) — bạn TỰ chọn vector store cho đúng, đừng mặc định 'nhỏ'. "
+        "(2) LLM/Embedding: DÙNG AWS Bedrock THẬT — creds ở /root/.aws/credentials (boto3 tự đọc), "
         "region us-east-1; generate bằng Claude (anthropic.claude-3-5-sonnet hoặc model có sẵn), "
         "embedding bằng Titan (amazon.titan-embed-text-v2:0) hoặc Cohere. KHÔNG mock. "
         "(3) File mẫu: ĐÃ có thật ở /workspace/docs (4 phòng, đa định dạng .txt/.csv). "
@@ -147,17 +149,25 @@ async def main():
     for name, content in DOCS.items():
         await dm.copy_file_to(cid, content.encode(), f"/workspace/docs/{name}")
 
-    # 2) Bơm AWS creds THẬT vào /etc/profile + 1 file env sandbox đọc được
+    # 2) Bơm AWS creds THẬT vào sandbox. Cách CHẮC NHẤT: ghi /root/.aws/credentials —
+    # boto3 TỰ ĐỌC file này, KHÔNG cần env var. (Lưu ý: shell_exec chạy `bash -c` là
+    # non-interactive nên KHÔNG đọc .bashrc → export vào .bashrc vô tác dụng; còn
+    # /etc/environment chỉ PAM đọc. File ~/.aws/credentials là đường chuẩn của boto3.)
     creds = _read_host_creds()
     if creds.get("AWS_ACCESS_KEY_ID"):
+        cred_ini = "[default]\n"
+        cred_ini += f"aws_access_key_id = {creds['AWS_ACCESS_KEY_ID']}\n"
+        cred_ini += f"aws_secret_access_key = {creds['AWS_SECRET_ACCESS_KEY']}\n"
+        if creds.get("AWS_SESSION_TOKEN"):
+            cred_ini += f"aws_session_token = {creds['AWS_SESSION_TOKEN']}\n"
+        cred_ini += "region = us-east-1\n"
+        await dm.exec_command_simple(cid, "mkdir -p /root/.aws")
+        await dm.copy_file_to(cid, cred_ini.encode(), "/root/.aws/credentials")
+        await dm.copy_file_to(cid, b"[default]\nregion = us-east-1\n", "/root/.aws/config")
+        # phụ trợ: cũng để file env cho ai muốn source thủ công
         env_lines = "\n".join(f'export {k}="{v}"' for k, v in creds.items())
         await dm.copy_file_to(cid, (env_lines + "\n").encode(), "/workspace/.awsenv")
-        # ghi vao /root/.bashrc de moi shell_exec deu co (shell_exec chay bash -c)
-        await dm.exec_command_simple(cid, "cat /workspace/.awsenv >> /root/.bashrc")
-        # cung ghi /etc/environment cho chac
-        plain = "\n".join(f'{k}={v}' for k, v in creds.items())
-        await dm.copy_file_to(cid, (plain + "\n").encode(), "/etc/environment")
-        print(f"[trace-full] injected AWS creds ({creds['AWS_ACCESS_KEY_ID'][:4]}...) into sandbox", flush=True)
+        print(f"[trace-full] injected AWS creds ({creds['AWS_ACCESS_KEY_ID'][:4]}...) -> /root/.aws/credentials", flush=True)
     else:
         print("[trace-full] WARNING: no host creds found — agent sẽ vẫn phải hỏi", flush=True)
 
