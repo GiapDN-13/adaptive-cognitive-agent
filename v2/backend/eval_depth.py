@@ -47,11 +47,27 @@ của agent đó. Chấm 3 tiêu chí, mỗi tiêu chí PASS chỉ khi agent TH�
   chủ trương giải/đào phần khó trước (không để cuối).
   FAIL nếu agent liệt kê đều đều rồi đi xây phần dễ trước, hoặc không phân định độ khó.
 
+[D4] TƯ DUY ĐA NHÁNH (Tree-of-Thoughts) — với ÍT NHẤT MỘT quyết định kiến trúc quan trọng:
+  PASS nếu agent SINH ≥2 phương án/nhánh khác nhau cho cùng một quyết định (vd vector DB:
+  Chroma vs Qdrant vs pgvector; hoặc retrieval: vector-only vs hybrid+rerank), SO SÁNH
+  trade-off của TỪNG nhánh, rồi chọn có lý do dựa trên so sánh — KHÔNG cam kết 1 phương án
+  ngay từ đầu.
+  FAIL nếu agent chỉ nêu 1 phương án rồi đi luôn (kể cả có phản biện 1 phương án đó), hoặc
+  liệt kê option mà không so sánh trade-off để chọn.
+
+[D5] TỰ PHẢN CHIẾU / SỬA SAI GIỮA CHỪNG (Wait/Aha):
+  PASS nếu agent tự nghi ngờ một giả định/quyết định của CHÍNH NÓ và điều chỉnh (dấu hiệu:
+  "khoan/chờ đã/thực ra/nghĩ lại/điều này sai/tốt hơn nên..."), tức có ít nhất 1 lần đảo
+  hướng dựa trên tự phê bình, không phải đi thẳng tắp.
+  FAIL nếu toàn bộ thinking là một mạch khẳng định, không có chỗ nào tự sửa/tự nghi ngờ.
+
 TRẢ ĐÚNG ĐỊNH DẠNG (không thêm gì ngoài khối này):
 D1: PASS|FAIL — <bằng chứng: trích 1 câu agent đã viết>
 D2: PASS|FAIL — <bằng chứng>
 D3: PASS|FAIL — <bằng chứng>
-TỔNG: <x>/3
+D4: PASS|FAIL — <bằng chứng>
+D5: PASS|FAIL — <bằng chứng>
+TỔNG: <x>/5
 """
 
 async def main():
@@ -72,12 +88,13 @@ async def main():
     out = "".join(b.get("text", "") for b in r.get("output", {}).get("message", {}).get("content", []))
     print(out)
 
-    # Parse verdict
+    # Parse verdict (D1-D5)
     import re
-    verdicts = dict(re.findall(r"(D[123]):\s*(PASS|FAIL)", out))
+    verdicts = dict(re.findall(r"(D[1-5]):\s*(PASS|FAIL)", out))
     npass = sum(1 for v in verdicts.values() if v == "PASS")
-    print(f"\n{'='*50}\nĐO ĐƯỢC: {npass}/3 PASS  (verdicts={verdicts})")
-    # Đây là baseline đo lỗi — KHÔNG assert pass; in rõ để so trước/sau khi sửa.
+    total = len(verdicts)
+    print(f"\n{'='*50}\nĐO ĐƯỢC: {npass}/{total} PASS  (verdicts={verdicts})")
+    # Đo để so trước/sau khi sửa — KHÔNG assert pass.
     sys.exit(0)
 
 asyncio.run(main())
