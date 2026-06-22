@@ -61,13 +61,30 @@ của agent đó. Chấm 3 tiêu chí, mỗi tiêu chí PASS chỉ khi agent TH�
   hướng dựa trên tự phê bình, không phải đi thẳng tắp.
   FAIL nếu toàn bộ thinking là một mạch khẳng định, không có chỗ nào tự sửa/tự nghi ngờ.
 
+[D6] CHẤM ĐIỂM CÓ TRỌNG SỐ KHI CHỌN NHÁNH (reward-model — mục 3.1 tài liệu):
+  PASS nếu khi so sánh các nhánh, agent KHÔNG chỉ kể trade-off định tính mà CHẤM theo các
+  TIÊU CHÍ rõ ràng (vd recall, độ trễ, chi phí, độ phức tạp vận hành, khớp requirement) và
+  nêu nhánh thắng vì điểm tổng cao hơn ở các tiêu chí QUAN TRỌNG NHẤT với bài này — tức có
+  ưu tiên/trọng số, không cào bằng.
+  FAIL nếu chỉ liệt kê ưu/nhược mỗi nhánh rồi chọn mà không nói tiêu chí nào quan trọng nhất
+  / vì sao điểm nhánh thắng cao hơn.
+
+[D7] BIẾT KHI MÌNH KHÔNG BIẾT (Self-RAG / ranh giới tri thức — mục 4.2 tài liệu):
+  PASS nếu agent tự đánh dấu RÕ chỗ nào là GIẢ ĐỊNH chưa chắc / cần verify (model ID, giới
+  hạn thư viện, con số benchmark, hành vi API) và chủ trương web_search/đọc doc/chạy thử để
+  xác minh THAY VÌ khẳng định từ trí nhớ — phân biệt "điều mình chắc" vs "điều cần kiểm".
+  FAIL nếu agent khẳng định mọi thứ chắc nịch từ trí nhớ, không đánh dấu giả định cần verify
+  nào (kể cả những thứ dễ sai như model ID / version API).
+
 TRẢ ĐÚNG ĐỊNH DẠNG (không thêm gì ngoài khối này):
 D1: PASS|FAIL — <bằng chứng: trích 1 câu agent đã viết>
 D2: PASS|FAIL — <bằng chứng>
 D3: PASS|FAIL — <bằng chứng>
 D4: PASS|FAIL — <bằng chứng>
 D5: PASS|FAIL — <bằng chứng>
-TỔNG: <x>/5
+D6: PASS|FAIL — <bằng chứng>
+D7: PASS|FAIL — <bằng chứng>
+TỔNG: <x>/7
 """
 
 async def main():
@@ -90,7 +107,7 @@ async def main():
 
     # Parse verdict (D1-D5)
     import re
-    verdicts = dict(re.findall(r"(D[1-5]):\s*(PASS|FAIL)", out))
+    verdicts = dict(re.findall(r"(D[1-7]):\s*(PASS|FAIL)", out))
     npass = sum(1 for v in verdicts.values() if v == "PASS")
     total = len(verdicts)
     print(f"\n{'='*50}\nĐO ĐƯỢC: {npass}/{total} PASS  (verdicts={verdicts})")
