@@ -68,23 +68,28 @@ def _is_transient_server_error(e: Exception) -> bool:
     return gates.is_transient_server_error(e)
 
 
-_PREBUILD_JUDGE_PROMPT = """Bạn là bộ chấm CỔNG TRƯỚC-KHI-BUILD. Đọc chuỗi suy nghĩ của một
-agent vừa định bắt tay XÂY (write_file) một hệ thống. Chấm xem tư duy ĐÃ ĐỦ CHẤT LƯỢNG để
-được phép build chưa, theo 2 trụ BẮT BUỘC:
+_PREBUILD_JUDGE_PROMPT = """Bạn là bộ chấm CỔNG TRƯỚC-KHI-BUILD, NGHIÊM KHẮC. Đọc chuỗi suy
+nghĩ của một agent vừa định bắt tay XÂY (write_file) một hệ thống. Chỉ cho qua (DAT) khi
+HỘI ĐỦ CẢ 2 trụ ở mức CÓ BẰNG CHỨNG TRONG TEXT — KHÔNG suy diễn hộ, KHÔNG nương tay:
 
-A. ƯỚC QUY MÔ ĐỊNH LƯỢNG: có suy ra tổng khối lượng/tải bằng con số từ ngữ cảnh (không phán
-   "nhỏ/lớn" suông), và tách trục "đồng thời" khỏi trục "khối lượng dữ liệu" khi việc đó
-   liên quan.
-B. ĐA NHÁNH CÓ CHẤM ĐIỂM: với ÍT NHẤT MỘT quyết định kiến trúc quan trọng, có sinh ≥2 phương
-   án, SO SÁNH trade-off theo tiêu chí, và chọn có lý do dựa trên so sánh (không liệt kê rồi
-   chọn bừa "cho đơn giản/đủ dùng").
+A. ƯỚC QUY MÔ ĐỊNH LƯỢNG: có CON SỐ tổng khối lượng/tải suy từ ngữ cảnh (vd "4 phòng × ~15
+   người × N file → ~nghìn tài liệu"), VÀ tách rõ trục "đồng thời" khỏi trục "khối lượng dữ
+   liệu". Phán "nhỏ/lớn/đủ" suông = CHƯA ĐẠT.
 
-Khoan dung hợp lý: agent KHÔNG cần hoàn hảo, chỉ cần THỰC SỰ có làm 2 trụ ở mức nghiêm túc.
-Nếu task quá nhỏ/không phải thiết kế hệ thống (vd sửa 1 hàm) → coi như ĐẠT.
+B. ĐA NHÁNH CÓ CHẤM ĐIỂM (khắt khe — đây là chỗ hay bị trượt): với ÍT NHẤT MỘT quyết định
+   kiến trúc, phải có ĐỦ 3 yếu tố:
+   (1) nêu ≥2 PHƯƠNG ÁN cụ thể (vd ChromaDB vs Qdrant vs pgvector),
+   (2) mỗi phương án kèm TRADE-OFF (điểm mạnh/yếu theo tiêu chí: recall/độ trễ/chi phí/scale),
+   (3) CHỌN có lý do dựa trên SO SÁNH + nêu TIÊU CHÍ ƯU TIÊN nào khiến phương án thắng.
+   Chỉ liệt kê tên option rồi chọn ("dùng X cho đơn giản/đủ dùng/cân bằng") = CHƯA ĐẠT.
+   Để USER quyết hộ mà agent không tự chấm = CHƯA ĐẠT.
+
+NGUYÊN TẮC: nếu KHÔNG CHẮC một trụ đã đạt → trả CHUA_DAT (mặc định nghiêng về chặn). Chỉ
+miễn khi task hiển nhiên KHÔNG phải thiết kế hệ thống (vd sửa 1 hàm, đổi text) → DAT.
 
 Trả ĐÚNG 2 dòng:
 VERDICT: DAT | CHUA_DAT
-FEEDBACK: <nếu CHUA_DAT, nêu NGẮN GỌN trụ nào thiếu và cần bổ sung gì cụ thể; nếu DAT để "-">
+FEEDBACK: <nếu CHUA_DAT: trụ nào thiếu (A/B) + thiếu yếu tố gì cụ thể; nếu DAT để "-">
 """
 
 

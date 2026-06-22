@@ -33,14 +33,28 @@ D6: PASS|FAIL — <bc>
 """
 
 async def one_run(i):
-    # Patch: dừng loop ngay sau khi build đầu được THỰC THI (đã qua gate).
-    captured = {"thinking": "", "built": False}
+    # Đo CHẤT LƯỢNG tư duy TRƯỚC build = thinking tại thời điểm gate CHO QUA (DAT).
+    # Đó là lúc tư duy-trước-build hoàn tất; không cần chờ build chạy (chậm/timeout).
+    # Hook vào _prebuild_quality_gate: khi DAT -> chốt thinking + dừng loop.
+    captured = {"thinking": "", "built": False, "gate_blocks": 0}
+    real_gate = loop._prebuild_quality_gate
+    async def gate_capture(thinking_text, session_id):
+        v, fb = await real_gate(thinking_text, session_id)
+        if v == "CHUA_DAT":
+            captured["gate_blocks"] += 1
+        else:  # DAT -> tư duy đủ để build -> chốt & dừng
+            captured["thinking"] = thinking_text
+            captured["built"] = True
+            loop._cancel_flags[session_id] = True
+        return v, fb
+    loop._prebuild_quality_gate = gate_capture
     real_exec = loop._execute_tool
     async def exec_stop(session, tool_name, tool_input, ws_send, cancel_event):
+        # Phòng khi gate không bắn (task nhỏ): vẫn chốt ở build đầu.
         r = await real_exec(session, tool_name, tool_input, ws_send, cancel_event)
-        if tool_name in ("write_file", "create_tool"):
+        if tool_name in ("write_file", "create_tool") and not captured["built"]:
             captured["built"] = True
-            loop._cancel_flags[session.id] = True  # dừng loop sau turn này
+            loop._cancel_flags[session.id] = True
         return r
     loop._execute_tool = exec_stop
 
@@ -115,17 +129,25 @@ async def one_run(i):
         pass
     finally:
         loop._execute_tool = real_exec
+        loop._prebuild_quality_gate = real_gate
         try:
             await dm.destroy_container(sess.container_id)
         except Exception:
             pass
-    # gom them thinking tu session.messages (think.thought nam trong assistant toolUse)
-    for m in sess.messages:
-        c = m.get("content")
-        if isinstance(c, list):
-            for b in c:
-                if isinstance(b, dict) and "toolUse" in b and isinstance(b["toolUse"].get("input"), dict):
-                    captured["thinking"] += "\n" + str(b["toolUse"]["input"].get("thought", ""))
+    # captured["thinking"] đã được set tại thời điểm gate cho qua (DAT). Bổ sung
+    # thinking từ messages phòng trường hợp gate không bắn (chốt ở exec_stop).
+    if len((captured["thinking"] or "").strip()) < 150:
+        acc = captured["thinking"] or ""
+        for m in sess.messages:
+            c = m.get("content")
+            if isinstance(c, list):
+                for b in c:
+                    if isinstance(b, dict):
+                        if "text" in b:
+                            acc += "\n" + b["text"]
+                        if "toolUse" in b and isinstance(b["toolUse"].get("input"), dict):
+                            acc += "\n" + str(b["toolUse"]["input"].get("thought", ""))
+        captured["thinking"] = acc
     return captured
 
 async def judge(blob):
@@ -153,7 +175,7 @@ async def main():
             print(f"  run {i+1}: SKIP (thinking ngắn {len(cap['thinking'])}, built={cap['built']})"); continue
         valid += 1
         for d in dims: tally[d] += 1 if res[d] else 0
-        print(f"  run {i+1}: " + " ".join(f"{d}={'P' if res[d] else 'F'}" for d in dims) + f"  (built={cap['built']})")
+        print(f"  run {i+1}: " + " ".join(f"{d}={'P' if res[d] else 'F'}" for d in dims) + f"  (gate_blocks={cap.get('gate_blocks',0)}, built={cap['built']})")
     print(f"\n{'='*48}")
     if valid:
         for d in dims:

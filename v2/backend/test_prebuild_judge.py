@@ -26,6 +26,13 @@ SAMPLES = [
      "yếu, scale kém khi nghìn+ doc); Nhánh B Qdrant server (mạnh scale + filter metadata, tốn "
      "vận hành); Nhánh C pgvector (tái dùng Postgres). Tiêu chí ưu tiên: scale theo khối lượng > "
      "đơn giản. Chấm: B thắng vì recall+scale cao nhất cho nghìn+ doc. Chọn Qdrant."),
+    # Vùng XÁM — gate cũ (khoan dung) cho lọt, gate siết phải CHẶN:
+    ("XAM-liệt kê không chấm", "CHUA_DAT",
+     "Quy mô nghìn+ tài liệu, tách trục đồng thời 30-50. Options: ChromaDB, Qdrant, pgvector. Dùng ChromaDB cho gọn."),
+    ("XAM-trade-off sơ sài không chấm", "CHUA_DAT",
+     "Corpus nghìn+ doc. Vector store: ChromaDB dễ cài nhưng concurrent yếu; Qdrant mạnh hơn. Chọn ChromaDB."),
+    ("XAM-user quyết hộ", "CHUA_DAT",
+     "Quy mô nghìn+ tài liệu. User đã chọn ChromaDB persistent nên dùng cái đó."),
 ]
 
 async def main():
