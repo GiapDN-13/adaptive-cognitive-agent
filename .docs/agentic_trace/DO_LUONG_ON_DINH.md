@@ -26,3 +26,20 @@
 ## Việc còn lại để có số e2e sạch
 Cần harness đo qua loop mà agent CHẮC CHẮN tới write_file trong cửa sổ (task nhỏ hơn /
 seed sẵn để build nhanh), khi đó mới đo được "gate nâng D4/D6 thật bao nhiêu".
+
+---
+
+## CẬP NHẬT — Bằng chứng e2e: gate T10 BẮN trong build thật (trace_events_GATE_FIRED.json)
+
+Sau nhiều harness đo e2e bị nhiễu (agent không tới write_file / Bedrock stall / gate_blocks=0),
+chạy `trace_run_full.py` (đã chứng minh build tới nơi) với gate siết → quan sát trực tiếp:
+
+- **gate fired: 1 lần** (`pre-build gate 1/2`) — gate CHẶN write_file đầu tiên vì judge thấy
+  thinking chưa đủ đa nhánh/chấm điểm.
+- Sau khi bị chặn: thinking xuất hiện **14 dấu hiệu đa nhánh** (vs/phương án/trade-off/Qdrant).
+- Agent build trọn: **write_file × 10**, KHÔNG deadlock (chỉ chặn 1/2 lần).
+
+=> Chuỗi nhân quả: định build → gate chặn → agent rethink (sinh đa nhánh) → judge cho qua →
+build. Đây là bằng chứng gate T10 (LLM-judge siết) THỰC SỰ CAN THIỆP trong luồng production,
+khác mọi lần trước (gate ngủ, gate_blocks=0). Số lượng hóa "nâng D4/D6 bao nhiêu %" vẫn cần
+nhiều mẫu sạch hơn, nhưng cơ chế đã verify hoạt động end-to-end.
