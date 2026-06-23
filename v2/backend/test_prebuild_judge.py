@@ -33,6 +33,16 @@ SAMPLES = [
      "Corpus nghìn+ doc. Vector store: ChromaDB dễ cài nhưng concurrent yếu; Qdrant mạnh hơn. Chọn ChromaDB."),
     ("XAM-user quyết hộ", "CHUA_DAT",
      "Quy mô nghìn+ tài liệu. User đã chọn ChromaDB persistent nên dùng cái đó."),
+    # Trụ C (D7): đủ A+B nhưng claim model ID/dim từ trí nhớ -> CHẶN; đánh dấu verify -> qua.
+    ("C-claim model từ trí nhớ", "CHUA_DAT",
+     "Quy mô nghìn+ doc (tách 30-50 đồng thời). Vector store: ChromaDB (dễ, concurrent yếu) vs "
+     "Qdrant (scale mạnh, tốn vận hành) vs pgvector; tiêu chí ưu tiên scale; chấm Qdrant thắng "
+     "vì scale cao nhất, chọn Qdrant. Embedding Titan v2 1024 chiều (đã test), Claude Haiku có sẵn."),
+    ("C-đánh dấu cần verify", "DAT",
+     "Quy mô nghìn+ doc (tách 30-50 đồng thời). Vector store: ChromaDB (dễ, concurrent yếu) vs "
+     "Qdrant (scale mạnh, tốn vận hành) vs pgvector; tiêu chí ưu tiên scale; chấm Qdrant thắng "
+     "vì scale cao nhất, chọn Qdrant. Embedding dự định Titan v2 [giả định — cần verify dimension "
+     "+ model có sẵn bằng list-foundation-models trước khi build]."),
 ]
 
 async def main():

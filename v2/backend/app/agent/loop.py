@@ -84,12 +84,18 @@ B. ĐA NHÁNH CÓ CHẤM ĐIỂM (khắt khe — đây là chỗ hay bị trư�
    Chỉ liệt kê tên option rồi chọn ("dùng X cho đơn giản/đủ dùng/cân bằng") = CHƯA ĐẠT.
    Để USER quyết hộ mà agent không tự chấm = CHƯA ĐẠT.
 
+C. KHÔNG CLAIM CHI TIẾT KỸ THUẬT TỪ TRÍ NHỚ: nếu thinking khẳng định CHẮC NỊCH chi tiết dễ
+   sai (model ID "có sẵn", embedding "N chiều", "(đã test)", tên hàm/version API) MÀ KHÔNG
+   đánh dấu là giả định cần verify / KHÔNG có dấu hiệu đã chạy lệnh kiểm trong môi trường này
+   → CHƯA ĐẠT. Đạt nếu: đã verify (có chạy lệnh kiểm) HOẶC đánh dấu rõ "[giả định — cần
+   verify]". Nếu thinking KHÔNG đụng tới chi tiết loại này → C không áp dụng (đừng vì C mà chặn).
+
 NGUYÊN TẮC: nếu KHÔNG CHẮC một trụ đã đạt → trả CHUA_DAT (mặc định nghiêng về chặn). Chỉ
 miễn khi task hiển nhiên KHÔNG phải thiết kế hệ thống (vd sửa 1 hàm, đổi text) → DAT.
 
 Trả ĐÚNG 2 dòng:
 VERDICT: DAT | CHUA_DAT
-FEEDBACK: <nếu CHUA_DAT: trụ nào thiếu (A/B) + thiếu yếu tố gì cụ thể; nếu DAT để "-">
+FEEDBACK: <nếu CHUA_DAT: trụ nào thiếu (A/B/C) + thiếu yếu tố gì cụ thể; nếu DAT để "-">
 """
 
 
