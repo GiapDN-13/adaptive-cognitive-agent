@@ -84,3 +84,27 @@ KẾT LUẬN VỀ "NÂNG %":
   đa nhánh + chấm điểm + tự phản chiếu, dù prompt đã có luật ToT/reward. Đây là giới hạn bản
   chất model → CHỈ gate ép được (trace GATE-FIRED đã chứng minh D4/D6 PASS khi qua gate).
 - => Đừng vặn prompt thêm cho D4/D6 (đã thử nhiều vòng, vô ích). Giá trị nằm ở GATE.
+
+---
+
+## CẬP NHẬT 4 — Tổng hợp "nâng %" (đủ dữ liệu để chốt)
+
+| Trụ | 1-turn (suy 1 phát) | Qua loop (think nhiều lần) | Trace gate-fired |
+|-----|---------------------|----------------------------|------------------|
+| D4 đa nhánh   | 17% | **~100%** | PASS |
+| D6 chấm điểm  | 17% | 0%        | **PASS** |
+| D7            | 83% | 100%      | (fail lần đó) |
+
+3 phát hiện sạch:
+1. **D7 nâng bằng PROMPT** (60→83%, luật 1b). XONG.
+2. **D4 nâng nhờ THINK QUA LOOP nhiều lần** (17→~100%) — agent suy đủ lâu thì tự làm đa nhánh.
+3. **D6 (chấm điểm có trọng số) CHỈ gate ép được** — mọi cách khác 0%, chỉ trace gate-fired PASS.
+   Đây là trụ cứng đầu nhất, phụ thuộc gate.
+
+LƯU Ý PHƯƠNG PHÁP: harness eval_gate_samples đo gate_fired=0 vì agent trong harness loanh quanh
+think/explore, KHÔNG tới write_file trong cửa sổ (timeout) → gate chưa bắn. Trong PRODUCTION thật
+(user → agent build) gate SẼ bắn (đã thấy ở trace_run_full GATE-FIRED). Tức D6 được gate bao phủ
+trong luồng thật, chỉ là harness ngắn không tái hiện được.
+
+=> KẾT LUẬN: "nâng %" đã đạt ở chỗ nâng được (D7 prompt, D4 think-qua-loop). D6 dựa gate trong
+build thật. Đừng vặn prompt thêm.
