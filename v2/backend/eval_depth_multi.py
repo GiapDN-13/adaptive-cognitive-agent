@@ -65,11 +65,27 @@ D7: PASS|FAIL — <bằng chứng>
 """
 
 async def one_run(idx):
-    """1 lần: agent phân tích -> lấy thinking -> giám khảo chấm. Trả dict {D1:bool,...}."""
+    """1 lần: agent phân tích -> lấy thinking -> giám khảo chấm. Trả dict {D1:bool,...}.
+    Chống nhiễu Bedrock: retry khi ServiceUnavailable/Throttling/timeout (lỗi hạ tầng,
+    KHÔNG phải agent dở) — nếu hết retry thì raise để main đếm là ERROR, KHÔNG tính FAIL."""
     c = create_llm_client()
     sysp = build_system_prompt(False)
+
+    async def _conv(**kw):
+        last = None
+        for attempt in range(4):
+            try:
+                return await c.converse(**kw)
+            except Exception as e:
+                s = f"{type(e).__name__}{e}".lower()
+                if any(m in s for m in ("serviceunavailable", "throttl", "timeout", "too many", "503", "500", "internalserver")):
+                    last = e
+                    await asyncio.sleep(2 ** attempt)  # 1,2,4,8s
+                    continue
+                raise
+        raise last
     # ép think nhiều: max_tokens cao
-    r = await c.converse(
+    r = await _conv(
         messages=[{"role": "user", "content": [{"text": TASK}]}],
         system=sysp, max_tokens=6000, temperature=0.4,  # ĐÚNG temp production của agent (đo đúng điều kiện thật)
     )
@@ -85,13 +101,20 @@ async def one_run(idx):
     if len(blob) < 200:
         return None, blob  # không đủ thinking (agent có thể đòi gọi tool)
     heavy = getattr(settings, "bedrock_heavy_model", "") or "us.anthropic.claude-opus-4-7"
-    j = await c.converse(
+    j = await _conv(
         messages=[{"role": "user", "content": [{"text": RUBRIC + "\n\n=== THINKING ===\n" + blob}]}],
         system="Giám khảo kỹ thuật khắt khe, chỉ PASS khi có bằng chứng rõ.",
         max_tokens=1500, model=heavy,
     )
     out = "".join(b.get("text", "") for b in j.get("output", {}).get("message", {}).get("content", []))
-    v = dict(re.findall(r"(D[1-7]):\s*(PASS|FAIL)", out))
+    # Parser linh hoạt: Opus 4.8 đôi khi trả "**D1:** PASS", "D1 — PASS", "D1: **FAIL**".
+    # Bỏ ký tự markdown rồi bắt Dk ... PASS/FAIL gần nhau.
+    clean = out.replace("*", "").replace("`", "")
+    v = dict(re.findall(r"(D[1-7])\s*[:\-—]*\s*(PASS|FAIL)", clean, re.IGNORECASE))
+    v = {k: val.upper() for k, val in v.items()}
+    if not v:
+        # judge không trả verdict nào (out rỗng/format lạ) = lỗi đo, KHÔNG tính FAIL
+        raise RuntimeError(f"judge trả 0 verdict (out {len(out)} chars)")
     return {k: v.get(k) == "PASS" for k in [f"D{i}" for i in range(1, 8)]}, blob
 
 async def main():

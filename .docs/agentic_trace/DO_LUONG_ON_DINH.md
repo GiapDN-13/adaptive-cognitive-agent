@@ -63,3 +63,24 @@ nhiều mẫu sạch hơn, nhưng cơ chế đã verify hoạt động end-to-en
 dimension/tên hàm) phải đánh dấu "[GIẢ ĐỊNH — cần verify]" + chạy thử kiểm trước khi cam kết;
 cấm ghi "(đã test)" nếu chưa thực chạy lệnh test trong phiên. Đo nhanh N=3 (1-turn): D7 60→67%
 (nhích nhẹ, trong nhiễu — chưa đủ kết luận; cần đo qua gate/nhiều mẫu hơn).
+
+---
+
+## CẬP NHẬT 3 — Baseline SẠCH N=6 (harness chống nhiễu + parser linh hoạt)
+
+Phát hiện: các baseline 0/7 trước đó là do **Bedrock ServiceUnavailable/throttle** (lỗi hạ
+tầng) + parser regex không bắt format Opus 4.8 → toàn FAIL oan. Sửa harness: retry 503/throttle
++ parser bỏ markdown + bắt "Dk ... PASS/FAIL" linh hoạt + judge-lỗi tính ERROR (không FAIL).
+
+Baseline N=6 (tư duy 1-turn, temp 0.4, KHÔNG qua gate):
+| D1 | D2 | D3 | D4 | D5 | D6 | D7 | TB |
+|----|----|----|----|----|----|----|----|
+|100%|100%|83%|17%|0%|17%|**83%**| 4.0/7 |
+
+KẾT LUẬN VỀ "NÂNG %":
+- **D7: 60% → 83%** nhờ luật 1b (chống claim model-ID/dim từ trí nhớ). Nâng được BẰNG PROMPT.
+- D1/D2 giữ 100%, D3 83%.
+- **D4/D5/D6 (17%/0%/17%): prompt KHÔNG nâng nổi** — agent MỘT MÌNH gần như không tự làm
+  đa nhánh + chấm điểm + tự phản chiếu, dù prompt đã có luật ToT/reward. Đây là giới hạn bản
+  chất model → CHỈ gate ép được (trace GATE-FIRED đã chứng minh D4/D6 PASS khi qua gate).
+- => Đừng vặn prompt thêm cho D4/D6 (đã thử nhiều vòng, vô ích). Giá trị nằm ở GATE.
