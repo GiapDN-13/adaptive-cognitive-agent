@@ -43,3 +43,23 @@ chạy `trace_run_full.py` (đã chứng minh build tới nơi) với gate siế
 build. Đây là bằng chứng gate T10 (LLM-judge siết) THỰC SỰ CAN THIỆP trong luồng production,
 khác mọi lần trước (gate ngủ, gate_blocks=0). Số lượng hóa "nâng D4/D6 bao nhiêu %" vẫn cần
 nhiều mẫu sạch hơn, nhưng cơ chế đã verify hoạt động end-to-end.
+
+---
+
+## CẬP NHẬT 2 — Chấm trace GATE-FIRED + luật D7 (1b)
+
+**Chấm D1-D7 trên trace mà gate ĐÃ bắn (qua loop thật) = 6/7** — D4 VÀ D6 đều PASS:
+- D6: agent làm BẢNG có cột "Trọng số" (Scale=3, Filter=3...), tính tổng có trọng số
+  (Chroma 52 vs Qdrant 50), chọn nhánh điểm cao — đúng reward-model của tài liệu.
+- Chỉ D7 FAIL: agent ghi model ID/dim "(đã test)" từ trí nhớ, không đánh dấu cần verify.
+
+**=> Phân biệt 2 PHÉP ĐO (quan trọng, dễ nhầm):**
+- `eval_depth_multi` (LLM 1-turn, KHÔNG qua gate): đo "agent TỰ suy 1 phát" → D4/D6 ~0-33%.
+  Tức agent MỘT MÌNH ít khi làm đa nhánh/chấm điểm.
+- Trace qua loop (gate BẮN): D4/D6 PASS. Gate ÉP được agent làm.
+- Hai số không mâu thuẫn — xác nhận GATE LÀ CẦN THIẾT (agent một mình không ổn ở D4/D6).
+
+**Luật D7 mới (1b trong prompts.py):** chi tiết kỹ thuật dễ sai từ trí nhớ (model ID/version/
+dimension/tên hàm) phải đánh dấu "[GIẢ ĐỊNH — cần verify]" + chạy thử kiểm trước khi cam kết;
+cấm ghi "(đã test)" nếu chưa thực chạy lệnh test trong phiên. Đo nhanh N=3 (1-turn): D7 60→67%
+(nhích nhẹ, trong nhiễu — chưa đủ kết luận; cần đo qua gate/nhiều mẫu hơn).
