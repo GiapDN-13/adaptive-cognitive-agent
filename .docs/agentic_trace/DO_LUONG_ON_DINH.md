@@ -183,3 +183,22 @@ Trace v6 (build trọn, gate active): **8/9**.
 - D1: "KHÔNG được phán '4 file là nhỏ' → cần server-mode" — hết lỗi Chroma cho 1k user.
 
 Còn lại: D9 ở quyết định phụ vẫn lọt (judge soi quyết định chính). Siết thêm tăng rủi ro chặn-oan.
+
+---
+
+## CẬP NHẬT 8 — D10 verify định lượng: trace v7 đạt 10/10
+
+Sếp hỏi: "đi sâu vào con số thì làm sao xác định ĐÚNG/SAI?" — đúng khoảng trống: agent verify
+"chạy được" (exit code) + "đủ thành phần" (giám khảo) nhưng KHÔNG verify con số đúng (app chạy
+xanh với chunk 300/600/2000 như nhau).
+
+Thêm D10 (verify định lượng, đa lĩnh vực). Trace v7 = **10/10**:
+- D10 PASS với bằng chứng thật: "EMBED OK | dim=1024" (đo dimension thật), "query 1 dòng cụ thể
+  → retrieve đúng dòng đó" (đo retrieval ground-truth), "HR hỏi câu Finance → không có chunk
+  Finance lọt" (đo phân quyền bằng ca có đáp án biết trước). KHÔNG còn coi "chạy xanh = đúng".
+- D8 PASS: chunk 500/overlap 50 split theo câu regex; CSV 1 dòng=1 chunk; top_k=4; cosine; dim=1024.
+- D9 PASS: chấm ChromaDB-persistent thắng (100đ) + build đúng nó — khớp.
+
+Rubric đã đủ 10 trụ: D1 quy mô · D2 nội dung · D3 phân rã · D4 đa nhánh · D5 tự phản chiếu ·
+D6 chấm điểm trọng số · D7 biết-không-biết · D8 chiều sâu định lượng · D9 build khớp quyết định ·
+D10 verify định lượng (chứng minh số ĐÚNG bằng đo). Mỗi trụ ánh xạ 1 feedback thật của sếp.
