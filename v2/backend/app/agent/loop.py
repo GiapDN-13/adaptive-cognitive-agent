@@ -80,9 +80,12 @@ B. ĐA NHÁNH CÓ CHẤM ĐIỂM (khắt khe — đây là chỗ hay bị trư�
    kiến trúc, phải có ĐỦ 3 yếu tố:
    (1) nêu ≥2 PHƯƠNG ÁN cụ thể (vd ChromaDB vs Qdrant vs pgvector),
    (2) mỗi phương án kèm TRADE-OFF (điểm mạnh/yếu theo tiêu chí: recall/độ trễ/chi phí/scale),
-   (3) CHỌN có lý do dựa trên SO SÁNH + nêu TIÊU CHÍ ƯU TIÊN nào khiến phương án thắng.
-   Chỉ liệt kê tên option rồi chọn ("dùng X cho đơn giản/đủ dùng/cân bằng") = CHƯA ĐẠT.
-   Để USER quyết hộ mà agent không tự chấm = CHƯA ĐẠT.
+   (3) CHỌN có CHẤM ĐIỂM/ƯU TIÊN: nêu TIÊU CHÍ nào QUAN TRỌNG NHẤT với bài (không cào bằng)
+       và phương án thắng VÌ ăn điểm ở đúng tiêu chí đó (vd "X thắng vì mạnh ở [tiêu chí ưu
+       tiên] dù thua ở [tiêu chí nhẹ]"). Bảng điểm là tốt nhất nhưng KHÔNG bắt buộc; tối thiểu
+       phải thấy rõ ƯU TIÊN + lý do thắng gắn với ưu tiên đó.
+   Chỉ liệt kê tên option rồi chọn ("dùng X cho đơn giản/đủ dùng/cân bằng/phù hợp hơn") mà
+   KHÔNG nêu tiêu chí ưu tiên = CHƯA ĐẠT. Để USER quyết hộ mà agent không tự chấm = CHƯA ĐẠT.
 
 C. KHÔNG CLAIM CHI TIẾT KỸ THUẬT TỪ TRÍ NHỚ: nếu thinking khẳng định CHẮC NỊCH chi tiết dễ
    sai (model ID "có sẵn", embedding "N chiều", "(đã test)", tên hàm/version API) MÀ KHÔNG
