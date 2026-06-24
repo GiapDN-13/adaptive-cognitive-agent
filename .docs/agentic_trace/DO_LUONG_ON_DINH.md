@@ -135,3 +135,31 @@ NÂNG % TỔNG KẾT (so baseline 1-turn 4.0/7):
 
 Hạn chế: n=3 nhỏ; D1 lần này thấp bất thường (có thể giám khảo khắt khe / mẫu nhỏ). Xu hướng
 chính (gate nâng D6, think-loop nâng D4) đã rõ và nhất quán với các đo trước.
+
+---
+
+## CẬP NHẬT 6 — T11 (post-build D6 gate): D6 từ 25% → 100% (3/3)
+
+Vấn đề trước: T10 pre-build gate bắn thưa (build nhanh lọt) → D6 chỉ 25-67%. Thêm T11:
+cổng thứ 2 ở end_turn (trước khi báo xong) — nếu suy nghĩ chưa có chấm điểm trọng số cho
+quyết định kiến trúc → chặn 1 lần, ép bổ sung (_has_weighted_scoring LLM-judge YES/NO).
+
+3 trace build TRỌN (tới spawn_evaluator) với T10+T11 active:
+| run | D1 | D2 | D3 | D4 | D5 | D6 | D7 | gate bắn | tổng |
+|-----|----|----|----|----|----|----|----|----------|------|
+| 1 | P | P | P | P | P | **P** | P | 1 | **7/7** |
+| 2 | P | P | P | P | P | **P** | P | 0 | **7/7** |
+| 3 | P | P | P | P | P | **P** | P | 1 | **7/7** |
+| **%** |100|100|100|100|100|**100**|100| 2/3 | **7.0/7** |
+
+D6: 17-25% (trước) → **100% (3/3)**. Run 2 D6 pass dù gate không bắn = agent TỰ chấm điểm
+đủ (gate cho qua đúng). Run 1,3 gate bắn → ép → D6 pass. Cả 2 cơ chế (tự đạt / bị ép) đều
+dẫn tới D6 pass.
+
+TỔNG KẾT NÂNG % (build trọn, production-like):
+- Baseline 1-turn: 4.0/7 (D4/D6 ~17%).
+- + T10 pre-build gate: TB 5.3/7 (D6 25-67%, gate thưa).
+- + T11 post-build D6 gate: **TB 7.0/7, D6 100%** (n=3).
+
+Hạn chế: n=3 (run 4 cắt vì build trọn ~15'/run quá lâu); cần n lớn hơn để chốt 100% bền,
+nhưng xu hướng đảo chiều rõ rệt (D6 0-25% → 100%) là tín hiệu mạnh, nhất quán 3/3.
