@@ -8,11 +8,10 @@ sys.path.insert(0, "/app"); sys.path.insert(0, ".")
 from app.llm.client import create_llm_client
 from app.config import settings
 
-RUBRIC = """Chấm 7 trụ tư duy, PASS khắt khe.
-[D1] QUY MÔ định lượng. [D2] Xử lý nội dung Excel. [D3] Phân rã+khó-trước.
-[D4] Đa nhánh (≥2 PA+trade-off+chọn). [D5] Tự phản chiếu. [D6] Chấm điểm CÓ TRỌNG SỐ.
-[D7] Biết khi không biết (model ID/dim đánh dấu cần verify).
-TRẢ mỗi dòng: D1: PASS|FAIL — .. (đủ D1..D7)"""
+# Dùng CHUNG rubric 10 trụ với eval_depth (không lệch tiêu chí).
+import eval_depth as ED
+RUBRIC = ED.RUBRIC
+NDIM = 10
 
 async def _conv(c, **kw):
     last = None
@@ -29,17 +28,21 @@ async def judge(blob):
     if len((blob or "").strip()) < 150: return None
     heavy = getattr(settings, "bedrock_heavy_model", "") or None
     c = create_llm_client()
-    j = await _conv(c, messages=[{"role":"user","content":[{"text":RUBRIC+"\n\n=== THINKING ===\n"+blob[-12000:]}]}],
-                    system="Giám khảo khắt khe.", max_tokens=1500, model=heavy)
+    # GIỮ CẢ ĐẦU (Bước 0/1.5: quy mô/phân rã/đa nhánh — D1-D6) LẪN CUỐI (verify/đo — D8/D10).
+    # Cắt giữa nếu quá dài. Lỗi đo cũ: blob[-12000:] cắt mất Bước 0 -> D1-D3 fail oan khi build dài.
+    if len(blob) > 16000:
+        blob = blob[:9000] + "\n\n…[lược phần giữa]…\n\n" + blob[-7000:]
+    j = await _conv(c, messages=[{"role":"user","content":[{"text":RUBRIC+"\n\n=== THINKING ===\n"+blob}]}],
+                    system="Giám khảo khắt khe.", max_tokens=2200, model=heavy)
     out = "".join(b.get("text","") for b in j.get("output",{}).get("message",{}).get("content",[]))
     clean = out.replace("*","").replace("`","")
-    v = dict((k, val.upper()) for k, val in re.findall(r"(D[1-7])\s*[:\-—]*\s*(PASS|FAIL)", clean, re.IGNORECASE))
-    return {k: v.get(k)=="PASS" for k in [f"D{i}" for i in range(1,8)]} if v else None
+    v = dict((k.upper(), val.upper()) for k, val in re.findall(r"(D1[0-9]|D[1-9])\s*[:\-—]*\s*(PASS|FAIL)", clean, re.IGNORECASE))
+    return {k: v.get(k)=="PASS" for k in [f"D{i}" for i in range(1,NDIM+1)]} if v else None
 
 async def main():
     n = int(sys.argv[1]) if len(sys.argv)>1 else 3
     import trace_run_full as T
-    dims=[f"D{i}" for i in range(1,8)]; tally={d:0 for d in dims}; valid=0; fired=0
+    dims=[f"D{i}" for i in range(1,NDIM+1)]; tally={d:0 for d in dims}; valid=0; fired=0
     for i in range(n):
         # chạy 1 trace build trọn
         import app.deps as deps

@@ -140,4 +140,5 @@ async def main():
     # Đo để so trước/sau khi sửa — KHÔNG assert pass.
     sys.exit(0)
 
-asyncio.run(main())
+if __name__ == "__main__":
+    asyncio.run(main())
