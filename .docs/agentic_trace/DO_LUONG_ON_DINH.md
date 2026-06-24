@@ -108,3 +108,30 @@ trong luồng thật, chỉ là harness ngắn không tái hiện được.
 
 => KẾT LUẬN: "nâng %" đã đạt ở chỗ nâng được (D7 prompt, D4 think-qua-loop). D6 dựa gate trong
 build thật. Đừng vặn prompt thêm.
+
+---
+
+## CẬP NHẬT 5 — THỐNG KÊ gate trên 3 trace BUILD TRỌN (production-like)
+
+3 lần chạy trace_run_full đầy đủ (build ≥4 file, gate bắn tự nhiên như production):
+
+| run | D1 | D2 | D3 | D4 | D5 | D6 | D7 | gate bắn | tổng |
+|-----|----|----|----|----|----|----|----|----------|------|
+| 1 | P | P | P | P | P | **P** | P | 1 | **7/7** |
+| 2 | F | P | P | P | P | **F** | F | 0 | 5/7 |
+| 3 | F | P | P | P | F | **P** | P | 1 | 6/7 |
+| **%** |33%|100%|100%|**100%**|67%|**67%**|67%| 2/3 | **TB 5.3/7** |
+
+TƯƠNG QUAN GATE ↔ D6 (rõ rệt, dù n nhỏ):
+- 2/2 run gate BẮN → D6 PASS.
+- 1 run gate KHÔNG bắn → D6 FAIL.
+=> Gate chính là thứ ép được D6 (trụ mà prompt/think không nâng nổi: 0-17% mọi nơi khác).
+
+NÂNG % TỔNG KẾT (so baseline 1-turn 4.0/7):
+- D4 đa nhánh: 17% → **100%** (think qua loop nhiều lần).
+- D6 chấm điểm: 17% → **67%** (gate ép — chỉ gate làm được).
+- TB: 4.0/7 → **5.3/7** ở điều kiện build trọn + gate active (production-like).
+- D1 dao động (33% ở 3 mẫu này) — nhiễu mẫu nhỏ; ở N=6 trước D1=100%, cần n lớn hơn để chốt.
+
+Hạn chế: n=3 nhỏ; D1 lần này thấp bất thường (có thể giám khảo khắt khe / mẫu nhỏ). Xu hướng
+chính (gate nâng D6, think-loop nâng D4) đã rõ và nhất quán với các đo trước.

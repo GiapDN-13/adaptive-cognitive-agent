@@ -38,13 +38,18 @@ async def _conv(c, **kw):
 async def one(i):
     cap = {"thinking": "", "gate_fired": 0, "built": False}
     real_exec = loop._execute_tool
-    async def exec_stop(s, tn, ti, w, c):
+    cap["writes"] = 0
+    async def exec_track(s, tn, ti, w, c):
         r = await real_exec(s, tn, ti, w, c)
         if tn in ("write_file", "create_tool"):
             cap["built"] = True
-            loop._cancel_flags[s.id] = True   # dừng sau build đầu (đã qua gate)
+            cap["writes"] += 1
+            # Dừng SAU vài write_file đầu (đã qua gate + có sản phẩm) để tiết kiệm,
+            # KHÔNG dừng ngay write đầu (gate cần thời gian explore trước đó).
+            if cap["writes"] >= 3:
+                loop._cancel_flags[s.id] = True
         return r
-    loop._execute_tool = exec_stop
+    loop._execute_tool = exec_track
     real_gate = loop._prebuild_quality_gate
     async def gate_watch(tt, sid):
         v, fb = await real_gate(tt, sid)
@@ -83,7 +88,7 @@ async def one(i):
     tools = tool_registry.get_tool_specs(is_subagent=False)   # TOOLS THẬT — agent mới build được + gate mới bắn
     try:
         await asyncio.wait_for(loop._run_loop(sess, [{"role":"user","content":[{"text":TASK}]}],
-            build_system_prompt(False), tools, ws, gen=0, cancel_event=None, max_iterations=25), timeout=500)
+            build_system_prompt(False), tools, ws, gen=0, cancel_event=None, max_iterations=35), timeout=900)
     except (asyncio.TimeoutError, asyncio.CancelledError): pass
     finally:
         loop._execute_tool = real_exec; loop._prebuild_quality_gate = real_gate

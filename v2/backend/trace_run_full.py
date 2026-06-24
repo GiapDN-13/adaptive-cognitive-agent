@@ -194,4 +194,5 @@ async def main():
         try: await dm.destroy_container(cid)
         except Exception: pass
 
-asyncio.run(main())
+if __name__ == "__main__":
+    asyncio.run(main())
