@@ -134,6 +134,43 @@ async def _prebuild_quality_gate(thinking_text: str, session_id: str) -> tuple[s
         return "DAT", "-"
 
 
+_D6_JUDGE_PROMPT = """Đọc TOÀN BỘ suy nghĩ của agent (đã build xong 1 hệ thống). Trả lời 1
+câu hỏi DUY NHẤT: agent có CHẤM ĐIỂM CÓ TRỌNG SỐ cho ít nhất MỘT quyết định kiến trúc lõi
+(vd chọn vector store / embedding / retrieval) không?
+
+CÓ (trả YES) khi: nêu ≥2 phương án + nêu TIÊU CHÍ kèm TRỌNG SỐ/ƯU TIÊN (tiêu chí nào nặng
+ký nhất với bài) + cho thấy phương án thắng VÌ điểm/ưu tiên đó (bảng điểm, hoặc "X thắng vì
+mạnh ở tiêu chí ưu tiên dù thua ở tiêu chí nhẹ").
+KHÔNG (trả NO) khi: chỉ chọn kèm lý do chung ("vì scale tốt", "phù hợp", "đơn giản") mà
+không có trọng số/ưu tiên tường minh; hoặc không so sánh phương án nào.
+
+Trả ĐÚNG 1 từ: YES hoặc NO"""
+
+
+async def _has_weighted_scoring(thinking_text: str, session_id: str) -> bool:
+    """T11 judge: thinking đã có chấm điểm CÓ TRỌNG SỐ (D6) cho 1 quyết định kiến trúc chưa?
+    Fail-open: lỗi → True (coi như có, không chặn oan vì sự cố hạ tầng)."""
+    if len((thinking_text or "").strip()) < 80:
+        return True  # quá ngắn để phán — không chặn (pre-build gate đã lo phần thiếu hẳn)
+    try:
+        client = _get_llm()
+        heavy = getattr(settings, "bedrock_heavy_model", "") or None
+        resp = await asyncio.wait_for(
+            client.converse(
+                messages=[{"role": "user", "content": [{"text": _D6_JUDGE_PROMPT + "\n\n=== SUY NGHĨ ===\n" + thinking_text[-9000:]}]}],
+                system="Trả đúng 1 từ YES hoặc NO.",
+                max_tokens=10,
+                model=heavy,
+            ),
+            timeout=60,
+        )
+        out = "".join(b.get("text", "") for b in resp.get("output", {}).get("message", {}).get("content", [])).upper()
+        return "NO" not in out  # NO → thiếu D6 → False (chặn); YES/khác → True
+    except Exception:
+        logger.exception(f"[{session_id[:8]}] D6 gate judge error — fail-open")
+        return True
+
+
 def _is_expired_token(e: Exception) -> bool:
     """AWS STS expired/invalid-token → pause for fresh token. See gates."""
     return gates.is_expired_token(e)
@@ -327,6 +364,11 @@ async def _run_loop(
     thinking_text_so_far = ""              # gom mọi 'thought' của think để soi gate
     prebuild_gate_blocks = 0
     MAX_PREBUILD_BLOCKS = 2
+    # T11 (POST-BUILD D6 gate): pre-build gate bắn thưa khi agent build nhanh → D6
+    # (chấm điểm có trọng số) hay lọt. Bổ sung 1 cổng ở end_turn: đã build mà toàn bộ
+    # suy nghĩ CHƯA thể hiện chấm điểm có trọng số cho quyết định kiến trúc → chặn báo
+    # xong 1 lần, ép bổ sung. Cap 1 lần để không treo.
+    d6_gate_nudged = False
 
     responded = False
     for iteration in range(iter_budget):
@@ -394,6 +436,23 @@ async def _run_loop(
                     + task_hint + "]"
                 )}]})
                 continue
+            # T11 — POST-BUILD D6 GATE: đã build, đã (hoặc đang) định báo xong, nhưng suy
+            # nghĩ chưa thể hiện CHẤM ĐIỂM CÓ TRỌNG SỐ cho quyết định kiến trúc → chặn 1 lần.
+            # Bắt được run "build nhanh" mà pre-build gate đã lọt. Chỉ áp khi thật sự build.
+            if (not is_subagent and built_something and not d6_gate_nudged):
+                has_d6 = await _has_weighted_scoring(thinking_text_so_far, session.id)
+                if not has_d6:
+                    d6_gate_nudged = True
+                    messages.append({"role": "assistant", "content": content_blocks})
+                    messages.append({"role": "user", "content": [{"text": (
+                        "[SYSTEM — CỔNG CHẤM ĐIỂM: bạn đã build nhưng các quyết định kiến trúc lõi "
+                        "(vd vector store / embedding / retrieval) CHƯA được chấm điểm có trọng số rõ "
+                        "ràng. Hãy dùng `think`: với quyết định kiến trúc quan trọng nhất, nêu 2-3 "
+                        "PHƯƠNG ÁN + các TIÊU CHÍ kèm TRỌNG SỐ/ƯU TIÊN (tiêu chí nào nặng ký nhất với "
+                        "bài này) + cho thấy phương án đã chọn thắng VÌ điểm có trọng số cao hơn (hoặc "
+                        "nếu phương án đang dùng KHÔNG thắng → đổi cho đúng). Làm xong rồi mới báo cáo.]"
+                    )}]})
+                    continue
             # Gate 2 (T8): đã gọi giám khảo nhưng verdict THIẾU → CHẶN báo cáo, ép làm
             # tiếp phần thiếu rồi gọi lại — lặp tới khi ĐỦ hoặc chạm cap (chống treo).
             if (not is_subagent and built_something
