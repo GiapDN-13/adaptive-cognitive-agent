@@ -76,6 +76,20 @@ của agent đó. Chấm 3 tiêu chí, mỗi tiêu chí PASS chỉ khi agent TH�
   FAIL nếu agent khẳng định mọi thứ chắc nịch từ trí nhớ, không đánh dấu giả định cần verify
   nào (kể cả những thứ dễ sai như model ID / version API).
 
+[D8] CHIỀU SÂU TRIỂN KHAI ĐỊNH LƯỢNG (không dừng ở tên công nghệ — áp MỌI lĩnh vực):
+  PASS nếu agent chốt THÔNG SỐ/CON SỐ cụ thể đủ để người khác bắt tay làm mà không phải tự
+  đoán — đúng theo bản chất task (vd RAG: chunk size/overlap MỖI loại tài liệu + top-k + ngưỡng
+  + embedding dim; data: ngưỡng outlier/null/encoding; API: rate-limit/timeout/retry; pentest:
+  payload/scope/rate cụ thể), VÀ thông số có lý do gắn với đặc tính dữ liệu/quy mô.
+  FAIL nếu chỉ nêu TÊN công nghệ/cách tiếp cận ("dùng chunking theo ngữ nghĩa", "có rerank")
+  mà KHÔNG có con số cụ thể, hoặc đọc thiết kế xong vẫn phải tự đoán tham số để code.
+
+[D9] BUILD KHỚP QUYẾT ĐỊNH (không "đúng trên giấy, làm trên tiện"):
+  PASS nếu thứ agent THỰC SỰ build/dùng KHỚP phương án đã chấm thắng; HOẶC nếu cố tình lệch
+  (dùng phương án tiện cho mẫu nhỏ) thì đã ask_user xác nhận rõ ràng.
+  FAIL nếu agent chấm phương án X thắng nhưng build Y kèm tự bào chữa ("tạm dùng cho mẫu nhỏ",
+  "migrate sau", "prototype nên...") mà KHÔNG hỏi người dùng.
+
 TRẢ ĐÚNG ĐỊNH DẠNG (không thêm gì ngoài khối này):
 D1: PASS|FAIL — <bằng chứng: trích 1 câu agent đã viết>
 D2: PASS|FAIL — <bằng chứng>
@@ -84,7 +98,9 @@ D4: PASS|FAIL — <bằng chứng>
 D5: PASS|FAIL — <bằng chứng>
 D6: PASS|FAIL — <bằng chứng>
 D7: PASS|FAIL — <bằng chứng>
-TỔNG: <x>/7
+D8: PASS|FAIL — <bằng chứng>
+D9: PASS|FAIL — <bằng chứng>
+TỔNG: <x>/9
 """
 
 async def main():
@@ -105,9 +121,10 @@ async def main():
     out = "".join(b.get("text", "") for b in r.get("output", {}).get("message", {}).get("content", []))
     print(out)
 
-    # Parse verdict (D1-D5)
+    # Parse verdict (D1-D9) — parser linh hoạt (bỏ markdown)
     import re
-    verdicts = dict(re.findall(r"(D[1-7]):\s*(PASS|FAIL)", out))
+    clean = out.replace("*", "").replace("`", "")
+    verdicts = dict((k, v.upper()) for k, v in re.findall(r"(D[1-9])\s*[:\-—]*\s*(PASS|FAIL)", clean, re.IGNORECASE))
     npass = sum(1 for v in verdicts.values() if v == "PASS")
     total = len(verdicts)
     print(f"\n{'='*50}\nĐO ĐƯỢC: {npass}/{total} PASS  (verdicts={verdicts})")

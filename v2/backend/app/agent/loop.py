@@ -134,41 +134,51 @@ async def _prebuild_quality_gate(thinking_text: str, session_id: str) -> tuple[s
         return "DAT", "-"
 
 
-_D6_JUDGE_PROMPT = """Đọc TOÀN BỘ suy nghĩ của agent (đã build xong 1 hệ thống). Trả lời 1
-câu hỏi DUY NHẤT: agent có CHẤM ĐIỂM CÓ TRỌNG SỐ cho ít nhất MỘT quyết định kiến trúc lõi
-(vd chọn vector store / embedding / retrieval) không?
+_D6_JUDGE_PROMPT = """Đọc TOÀN BỘ suy nghĩ + hành động của agent (đã build xong 1 hệ thống).
+Chấm 2 việc về các QUYẾT ĐỊNH lõi (vd công nghệ/cách tiếp cận cho thành phần quan trọng nhất):
 
-CÓ (trả YES) khi: nêu ≥2 phương án + nêu TIÊU CHÍ kèm TRỌNG SỐ/ƯU TIÊN (tiêu chí nào nặng
-ký nhất với bài) + cho thấy phương án thắng VÌ điểm/ưu tiên đó (bảng điểm, hoặc "X thắng vì
-mạnh ở tiêu chí ưu tiên dù thua ở tiêu chí nhẹ").
-KHÔNG (trả NO) khi: chỉ chọn kèm lý do chung ("vì scale tốt", "phù hợp", "đơn giản") mà
-không có trọng số/ưu tiên tường minh; hoặc không so sánh phương án nào.
+(1) CHẤM ĐIỂM CÓ TRỌNG SỐ: có nêu ≥2 phương án + tiêu chí kèm TRỌNG SỐ/ƯU TIÊN + chỉ ra
+    phương án thắng vì điểm/ưu tiên đó không?
+(2) BUILD KHỚP KẾT QUẢ CHẤM: thứ agent THỰC SỰ build/dùng có ĐÚNG là phương án đã chấm THẮNG
+    không? CẢNH BÁO ĐỎ: agent chấm phương án X thắng nhưng lại build bằng Y với lý do tự bào
+    chữa ("tạm dùng Y cho mẫu nhỏ", "migrate X sau", "prototype nên Y") MÀ KHÔNG hỏi người
+    dùng xác nhận → đây là "đúng trên giấy, làm trên tiện", KHÔNG được chấp nhận.
 
-Trả ĐÚNG 1 từ: YES hoặc NO"""
+Trả ĐÚNG 1 trong 3 từ:
+- THIEU_CHAM_DIEM : nếu (1) chưa đạt (chưa chấm điểm có trọng số).
+- LECH_BUILD : nếu (1) đạt NHƯNG build ≠ phương án thắng mà không hỏi user (vi phạm (2)).
+- OK : nếu (1) đạt VÀ build khớp phương án thắng (hoặc lệch nhưng đã ask_user xác nhận)."""
 
 
-async def _has_weighted_scoring(thinking_text: str, session_id: str) -> bool:
-    """T11 judge: thinking đã có chấm điểm CÓ TRỌNG SỐ (D6) cho 1 quyết định kiến trúc chưa?
-    Fail-open: lỗi → True (coi như có, không chặn oan vì sự cố hạ tầng)."""
+async def _d6_build_verdict(thinking_text: str, session_id: str) -> str:
+    """T11 judge: trả 1 trong {THIEU_CHAM_DIEM, LECH_BUILD, OK}.
+    - THIEU_CHAM_DIEM: chưa chấm điểm có trọng số (D6).
+    - LECH_BUILD: chấm X thắng nhưng build Y mà không ask_user ("đúng trên giấy, làm trên tiện").
+    - OK: chấm điểm đủ + build khớp (hoặc lệch nhưng đã ask_user).
+    Fail-open: lỗi/quá ngắn → OK (không chặn oan vì sự cố hạ tầng)."""
     if len((thinking_text or "").strip()) < 80:
-        return True  # quá ngắn để phán — không chặn (pre-build gate đã lo phần thiếu hẳn)
+        return "OK"
     try:
         client = _get_llm()
         heavy = getattr(settings, "bedrock_heavy_model", "") or None
         resp = await asyncio.wait_for(
             client.converse(
-                messages=[{"role": "user", "content": [{"text": _D6_JUDGE_PROMPT + "\n\n=== SUY NGHĨ ===\n" + thinking_text[-9000:]}]}],
-                system="Trả đúng 1 từ YES hoặc NO.",
-                max_tokens=10,
+                messages=[{"role": "user", "content": [{"text": _D6_JUDGE_PROMPT + "\n\n=== SUY NGHĨ + HÀNH ĐỘNG ===\n" + thinking_text[-9000:]}]}],
+                system="Trả đúng 1 từ: THIEU_CHAM_DIEM | LECH_BUILD | OK.",
+                max_tokens=12,
                 model=heavy,
             ),
             timeout=60,
         )
         out = "".join(b.get("text", "") for b in resp.get("output", {}).get("message", {}).get("content", [])).upper()
-        return "NO" not in out  # NO → thiếu D6 → False (chặn); YES/khác → True
+        if "THIEU_CHAM_DIEM" in out or "THIEU CHAM" in out:
+            return "THIEU_CHAM_DIEM"
+        if "LECH_BUILD" in out or "LECH BUILD" in out:
+            return "LECH_BUILD"
+        return "OK"
     except Exception:
         logger.exception(f"[{session_id[:8]}] D6 gate judge error — fail-open")
-        return True
+        return "OK"
 
 
 def _is_expired_token(e: Exception) -> bool:
@@ -440,18 +450,31 @@ async def _run_loop(
             # nghĩ chưa thể hiện CHẤM ĐIỂM CÓ TRỌNG SỐ cho quyết định kiến trúc → chặn 1 lần.
             # Bắt được run "build nhanh" mà pre-build gate đã lọt. Chỉ áp khi thật sự build.
             if (not is_subagent and built_something and not d6_gate_nudged):
-                has_d6 = await _has_weighted_scoring(thinking_text_so_far, session.id)
-                if not has_d6:
+                _v = await _d6_build_verdict(thinking_text_so_far, session.id)
+                if _v == "THIEU_CHAM_DIEM":
                     d6_gate_nudged = True
                     await ws_send({"type": "agent_status", "tool": "thinking", "detail": "cổng chấm điểm (D6)"})
                     messages.append({"role": "assistant", "content": content_blocks})
                     messages.append({"role": "user", "content": [{"text": (
-                        "[SYSTEM — CỔNG CHẤM ĐIỂM: bạn đã build nhưng các quyết định kiến trúc lõi "
-                        "(vd vector store / embedding / retrieval) CHƯA được chấm điểm có trọng số rõ "
-                        "ràng. Hãy dùng `think`: với quyết định kiến trúc quan trọng nhất, nêu 2-3 "
-                        "PHƯƠNG ÁN + các TIÊU CHÍ kèm TRỌNG SỐ/ƯU TIÊN (tiêu chí nào nặng ký nhất với "
-                        "bài này) + cho thấy phương án đã chọn thắng VÌ điểm có trọng số cao hơn (hoặc "
-                        "nếu phương án đang dùng KHÔNG thắng → đổi cho đúng). Làm xong rồi mới báo cáo.]"
+                        "[SYSTEM — CỔNG CHẤM ĐIỂM: bạn đã build nhưng các quyết định lõi (công nghệ/"
+                        "cách tiếp cận cho thành phần quan trọng nhất) CHƯA được chấm điểm có trọng số "
+                        "rõ ràng. Hãy dùng `think`: với quyết định quan trọng nhất, nêu 2-3 PHƯƠNG ÁN + "
+                        "TIÊU CHÍ kèm TRỌNG SỐ/ƯU TIÊN + chỉ ra phương án thắng VÌ điểm có trọng số cao "
+                        "hơn. Làm xong rồi mới báo cáo.]"
+                    )}]})
+                    continue
+                if _v == "LECH_BUILD":
+                    d6_gate_nudged = True
+                    await ws_send({"type": "agent_status", "tool": "thinking", "detail": "cổng khớp build (D6)"})
+                    messages.append({"role": "assistant", "content": content_blocks})
+                    messages.append({"role": "user", "content": [{"text": (
+                        "[SYSTEM — CỔNG KHỚP QUYẾT ĐỊNH: bạn đã chấm điểm và một phương án THẮNG, nhưng "
+                        "lại BUILD bằng phương án KHÁC kèm lý do tự bào chữa ('tạm dùng cho mẫu nhỏ', "
+                        "'migrate sau', 'prototype nên...'). ĐÂY LÀ 'đúng trên giấy, làm trên tiện' — "
+                        "KHÔNG chấp nhận. Chọn 1 trong 2: (a) BUILD LẠI bằng đúng phương án đã chấm thắng; "
+                        "hoặc (b) nếu thật sự muốn dùng phương án tiện cho giai đoạn này, BẮT BUỘC `ask_user` "
+                        "nêu rõ 'phương án đúng cho quy mô thật là X; tôi đề xuất tạm dùng Y vì [lý do], "
+                        "bạn đồng ý hay muốn làm X luôn?' — để NGƯỜI DÙNG quyết, KHÔNG tự ý 'migrate sau'.]"
                     )}]})
                     continue
             # Gate 2 (T8): đã gọi giám khảo nhưng verdict THIẾU → CHẶN báo cáo, ép làm
