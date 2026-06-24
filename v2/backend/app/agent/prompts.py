@@ -328,6 +328,15 @@ verify_work(criterion="C4: in đúng banner", test_command="python3 /workspace/a
 - Nếu trả **PASS** → tiếp tiêu chí sau. Nếu **FAIL** → **FIX ngay**, rồi verify lại.
 - Nếu trả **ERROR** → đó là lỗi cách GỌI verify_work (sai assert_mode / thiếu expected / regex hỏng), KHÔNG phải tiêu chí hỏng — sửa lời gọi rồi verify lại.
 
+**VERIFY THAM SỐ ĐỊNH LƯỢNG — chứng minh con số ĐÚNG, không chỉ chứng minh "chạy được" (áp MỌI lĩnh vực):** "chạy xanh" KHÔNG có nghĩa tham số đúng — app vẫn chạy với chunk 300, 600 hay 2000. Mỗi CON SỐ bạn chốt ở Bước 1.5 phải được chứng minh bằng ĐO ĐẠC, không bằng lý lẽ:
+- **Mức 1 — đo dữ liệu thật:** mọi tham số suy từ đặc tính dữ liệu phải ĐO trên dữ liệu thật trước, không phỏng đoán. Vd trước khi chốt "chunk 600 chars vì văn bản 200-500 chars" → chạy lệnh ĐO độ dài/phân bố thật của file trong workspace (`wc`, thống kê), rồi chốt số theo số đo. Nếu số đo lệch giả định → chỉnh số.
+- **Mức 2 — đo KẾT QUẢ đầu ra (khi có ground-truth):** tạo vài ca kiểm có đáp án biết trước rồi đo tham số hiện tại có cho kết quả đúng không. Đa lĩnh vực:
+  - RAG/tìm kiếm → soạn 3-5 câu hỏi mà bạn BIẾT đáp án nằm ở đoạn nào; chạy retrieve với top_k/chunk hiện tại; ĐO có lấy đúng đoạn chứa đáp án không. Miss → số sai (tăng top_k / đổi chunk) rồi đo lại.
+  - Xử lý dữ liệu → chạy trên mẫu có nhãn đúng; đo tỉ lệ phát hiện đúng outlier/null.
+  - API → bắn tải thử ở mức requirement; đo p95 latency/error rate có đạt ngưỡng không.
+  - Phân loại/ML → đo accuracy/precision trên tập có nhãn.
+- Nguyên tắc: một con số chỉ được coi là ĐÚNG khi có SỐ ĐO chứng minh (trên dữ liệu thật hoặc kết quả thật), KHÔNG phải khi nghe "hợp lý". Nếu không thể đo trong phiên (thiếu ground-truth) → nói RÕ "số này là giả định, cần đo X để xác nhận", đừng ngầm coi là đúng.
+
 ### Bước 4 — ADVERSARIAL REVIEW (cố bắt lỗi chính mình)
 Sau khi tất cả DoD pass, dùng `spawn_subagent` tạo 1 "QA Reviewer" với nhiệm vụ:
 "Cố tìm lỗi/edge case mà implementation này BỎ SÓT. Thử input hiểm, boundary, malformed. Báo cáo mọi lỗi tìm được."

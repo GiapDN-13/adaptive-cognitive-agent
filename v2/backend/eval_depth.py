@@ -90,6 +90,14 @@ của agent đó. Chấm 3 tiêu chí, mỗi tiêu chí PASS chỉ khi agent TH�
   FAIL nếu agent chấm phương án X thắng nhưng build Y kèm tự bào chữa ("tạm dùng cho mẫu nhỏ",
   "migrate sau", "prototype nên...") mà KHÔNG hỏi người dùng.
 
+[D10] VERIFY THAM SỐ ĐỊNH LƯỢNG (chứng minh con số ĐÚNG, không chỉ "chạy được"):
+  PASS nếu các con số/tham số then chốt được chứng minh bằng ĐO ĐẠC — đo đặc tính dữ liệu thật
+  trước khi chốt (vd đo độ dài tài liệu rồi mới chọn chunk size), HOẶC đo kết quả đầu ra trên
+  ca có ground-truth (vd retrieve câu hỏi mẫu xem có lấy đúng đoạn không); hoặc nói RÕ "số này
+  là giả định cần đo X" khi không đo được.
+  FAIL nếu agent chốt con số CHỈ bằng lý lẽ ("chunk 600 vì văn bản ngắn") mà không đo gì, và
+  coi "app chạy xanh" = tham số đúng (dù chạy xanh không phân biệt tham số tốt/xấu).
+
 TRẢ ĐÚNG ĐỊNH DẠNG (không thêm gì ngoài khối này):
 D1: PASS|FAIL — <bằng chứng: trích 1 câu agent đã viết>
 D2: PASS|FAIL — <bằng chứng>
@@ -100,7 +108,8 @@ D6: PASS|FAIL — <bằng chứng>
 D7: PASS|FAIL — <bằng chứng>
 D8: PASS|FAIL — <bằng chứng>
 D9: PASS|FAIL — <bằng chứng>
-TỔNG: <x>/9
+D10: PASS|FAIL — <bằng chứng>
+TỔNG: <x>/10
 """
 
 async def main():
@@ -124,7 +133,7 @@ async def main():
     # Parse verdict (D1-D9) — parser linh hoạt (bỏ markdown)
     import re
     clean = out.replace("*", "").replace("`", "")
-    verdicts = dict((k, v.upper()) for k, v in re.findall(r"(D[1-9])\s*[:\-—]*\s*(PASS|FAIL)", clean, re.IGNORECASE))
+    verdicts = dict((k.upper(), v.upper()) for k, v in re.findall(r"(D1[0-9]|D[1-9])\s*[:\-—]*\s*(PASS|FAIL)", clean, re.IGNORECASE))
     npass = sum(1 for v in verdicts.values() if v == "PASS")
     total = len(verdicts)
     print(f"\n{'='*50}\nĐO ĐƯỢC: {npass}/{total} PASS  (verdicts={verdicts})")
