@@ -163,3 +163,23 @@ TỔNG KẾT NÂNG % (build trọn, production-like):
 
 Hạn chế: n=3 (run 4 cắt vì build trọn ~15'/run quá lâu); cần n lớn hơn để chốt 100% bền,
 nhưng xu hướng đảo chiều rõ rệt (D6 0-25% → 100%) là tín hiệu mạnh, nhất quán 3/3.
+
+---
+
+## CẬP NHẬT 7 — Sửa 2 lỗi sếp bắt (chấm v6, rubric mở rộng D1-D9)
+
+Sếp bắt: (1) agent chấm Qdrant thắng nhưng build Chroma ("migrate sau"); (2) thiếu chi tiết
+định lượng (chunk/top-k/ngưỡng) — và KHÔNG được thiên RAG, phải chung mọi lĩnh vực.
+
+Sửa: T11 gate → 3 trạng thái (THIEU_CHAM_DIEM/LECH_BUILD/OK); prompt Bước 1.5 thêm "CHIỀU SÂU
+TRIỂN KHAI" (đa lĩnh vực) + "KHỚP BUILD VỚI QUYẾT ĐỊNH"; rubric +D8 (chiều sâu định lượng) +D9
+(build khớp quyết định).
+
+Trace v6 (build trọn, gate active): **8/9**.
+- D8 PASS: "chunk 600 chars overlap 100 vì văn bản nội bộ 200-500 chars; top_k=5 cosine; Titan
+  dim 1024; CSV mỗi hàng=1 chunk" — con số gắn lý do (trước đây thiếu).
+- D9: quyết định CHÍNH (vector store) KHỚP — chấm Qdrant thắng + build Qdrant (hết lỗi Chroma-cho-1k).
+  FAIL chỉ ở quyết định PHỤ (LLM Haiku 3 vs 4.5, không ask_user) — sạn nhỏ.
+- D1: "KHÔNG được phán '4 file là nhỏ' → cần server-mode" — hết lỗi Chroma cho 1k user.
+
+Còn lại: D9 ở quyết định phụ vẫn lọt (judge soi quyết định chính). Siết thêm tăng rủi ro chặn-oan.
