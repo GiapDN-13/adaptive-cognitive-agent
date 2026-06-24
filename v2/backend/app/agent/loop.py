@@ -443,6 +443,7 @@ async def _run_loop(
                 has_d6 = await _has_weighted_scoring(thinking_text_so_far, session.id)
                 if not has_d6:
                     d6_gate_nudged = True
+                    await ws_send({"type": "agent_status", "tool": "thinking", "detail": "cổng chấm điểm (D6)"})
                     messages.append({"role": "assistant", "content": content_blocks})
                     messages.append({"role": "user", "content": [{"text": (
                         "[SYSTEM — CỔNG CHẤM ĐIỂM: bạn đã build nhưng các quyết định kiến trúc lõi "

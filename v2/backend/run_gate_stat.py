@@ -69,23 +69,25 @@ async def main():
         # dừng sau khi build vài file (gate đã bắn + có sản phẩm) để tiết kiệm
         import app.agent.loop as loop
         real_exec = loop._execute_tool; wcount = {"n": 0}
+        # KHÔNG cắt ở write_file (T11 chạy ở end_turn — phải để agent tới đó). Cắt khi
+        # agent gọi spawn_evaluator (dấu hiệu sắp report → T10 + T11 đã chạy xong) để
+        # tiết kiệm, hoặc khi đã build kha khá + hết iteration.
         async def ex(s, tn, ti, w, c):
             r = await real_exec(s, tn, ti, w, c)
-            if tn in ("write_file","create_tool"):
-                wcount["n"] += 1
-                if wcount["n"] >= 4: loop._cancel_flags[s.id] = True
+            if tn in ("write_file","create_tool"): wcount["n"] += 1
+            if tn == "spawn_evaluator": loop._cancel_flags[s.id] = True  # sắp report
             return r
         loop._execute_tool = ex
         try:
-            await asyncio.wait_for(run_agent_loop(sess, T.TASK, tr), timeout=900)
+            await asyncio.wait_for(run_agent_loop(sess, T.TASK, tr), timeout=1200)
         except (asyncio.TimeoutError, asyncio.CancelledError):
             pass
         finally:
             loop._execute_tool = real_exec
             try: await dm.destroy_container(sess.container_id)
             except Exception: pass
-        # đếm gate bắn + gom thinking
-        gate_n = sum(1 for e in tr.events if e.get("type")=="agent_status" and "pre-build gate" in str(e.get("detail","")))
+        # đếm gate bắn (pre-build T10 + post-build D6 T11) + gom thinking
+        gate_n = sum(1 for e in tr.events if e.get("type")=="agent_status" and ("pre-build gate" in str(e.get("detail","")) or "chấm điểm" in str(e.get("detail",""))))
         blob = "".join(e.get("content","") for e in tr.events if e.get("type") in ("agent_thinking","agent_chunk") and e.get("content"))
         try:
             res = await judge(blob)
