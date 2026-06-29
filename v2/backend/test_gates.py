@@ -69,6 +69,13 @@ check("killport: 8080+kill", gates.detect_kill_port_intent("netstat -tlnp | grep
 check("killport: normal cmd is not", not gates.detect_kill_port_intent("python3 app.py"))
 check("killport: ls is not", not gates.detect_kill_port_intent("ls -la /workspace"))
 
+# ---- detect_process_check_intent (loop ps aux trong slim container) ----
+check("proc: ps aux|grep", gates.detect_process_check_intent('cd /workspace && ps aux | grep python | grep -v grep'))
+check("proc: ps auxf", gates.detect_process_check_intent('ps auxf | grep uvicorn'))
+check("proc: pgrep", gates.detect_process_check_intent('pgrep -f uvicorn'))
+check("proc: ls khong phai", not gates.detect_process_check_intent('ls -la /workspace'))
+check("proc: curl health khong phai", not gates.detect_process_check_intent('curl -s localhost:8080/'))
+
 
 # ---- is_expired_token vs is_transient_server_error (must NOT overlap) ----
 class ExpiredTokenException(Exception): pass

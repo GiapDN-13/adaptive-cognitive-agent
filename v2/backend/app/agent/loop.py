@@ -650,8 +650,32 @@ async def _run_loop(
                     # kill/free-a-port loop: pkill→lsof→fuser→ps→/proc...) slips past the
                     # exact-input check above. Detect by INTENT keyword, not exact input.
                     if tool_name == "shell_exec":
-                        intent = "kill_or_free_port" if gates.detect_kill_port_intent(
-                            str(tool_input.get("command", ""))) else None
+                        _cmd_str = str(tool_input.get("command", ""))
+                        intent = None
+                        if gates.detect_kill_port_intent(_cmd_str):
+                            intent = "kill_or_free_port"
+                        elif gates.detect_process_check_intent(_cmd_str):
+                            intent = "process_check"
+                        # process_check: lặp ps/pgrep (slim container không có) → nudge dùng /proc
+                        if intent == "process_check":
+                            ic = f"intent:{intent}"
+                            tool_sig_counts[ic] = tool_sig_counts.get(ic, 0) + 1
+                            if tool_sig_counts[ic] >= 3 and ic not in plateau_nudged:
+                                plateau_nudged.add(ic)
+                                tool_results.append({"text": (
+                                    "[SYSTEM — STUCK TÌM PROCESS: bạn đã lặp `ps`/`pgrep` nhiều lần — sandbox "
+                                    "python:3.11-slim KHÔNG có `ps`/`pgrep`/`top` (exit 'command not found'). DỪNG "
+                                    "thử lại. Liệt kê tiến trình qua /proc, ví dụ:\n"
+                                    "  python3 - <<'PY'\n"
+                                    "import os\n"
+                                    "for d in [p for p in os.listdir('/proc') if p.isdigit()]:\n"
+                                    "  try: print(d, open(f'/proc/{d}/cmdline','rb').read().replace(b'\\\\x00',b' ').decode().strip())\n"
+                                    "  except: pass\n"
+                                    "PY\n"
+                                    "Hoặc nếu chỉ cần biết app sống: `curl -s -o /dev/null -w '%{http_code}' "
+                                    "http://localhost:8080/`. Đừng dùng `ps` nữa.]"
+                                )})
+                            intent = None  # đã xử lý, không rơi vào nhánh kill-port bên dưới
                         if intent:
                             ic = f"intent:{intent}"
                             tool_sig_counts[ic] = tool_sig_counts.get(ic, 0) + 1

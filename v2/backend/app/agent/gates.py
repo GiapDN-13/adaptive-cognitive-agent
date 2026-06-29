@@ -125,6 +125,15 @@ def detect_kill_port_intent(command: str) -> bool:
     return False
 
 
+def detect_process_check_intent(command: str) -> bool:
+    """True nếu lệnh đang cố LIỆT KÊ/TÌM tiến trình bằng `ps`/`pgrep`/`top`/`htop` — các
+    lệnh slim container (python:3.11-slim) KHÔNG có (exit 'command not found'). Agent hay
+    lặp `ps aux | grep ...` nhiều biến thể (auxf, có/không cd) tới khi cạn iteration. Bắt
+    theo INTENT để đếm lặp, không theo input chính xác (vì mỗi lần đổi chút)."""
+    cmd_l = (command or "").lower()
+    return any(k in cmd_l for k in ("ps aux", "ps -ef", "ps -e", "ps ax", "pgrep", "htop", "top -", "| grep -e python", "ps auxf"))
+
+
 def _err_str(e: Exception) -> str:
     return f"{type(e).__name__}: {e}".lower()
 
