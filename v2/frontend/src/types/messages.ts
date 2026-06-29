@@ -7,6 +7,8 @@ export interface Message {
   // Transparency blocks rendered inline in chat
   kind?: 'normal' | 'reasoning' | 'retrieval' | 'critique' | 'replay'
   retrieval?: RetrievalData
+  // Ảnh đính kèm trong tin nhắn user (object URL để render preview trong chat)
+  imageUrls?: string[]
 }
 
 export interface RetrievalResult {

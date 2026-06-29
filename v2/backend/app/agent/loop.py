@@ -235,15 +235,34 @@ async def run_agent_loop(
     session: Session,
     user_message: str,
     ws_send: Callable,
+    images: list | None = None,
 ):
     _cancel_flags[session.id] = False
     gen = _session_generation.get(session.id, 0) + 1
     _session_generation[session.id] = gen
     cancel_event = threading.Event()
     _cancel_events[session.id] = cancel_event
-    logger.info(f"[{session.id[:8]}] agent loop start, gen={gen}, msg={user_message[:50]}")
+    logger.info(f"[{session.id[:8]}] agent loop start, gen={gen}, msg={user_message[:50]}, images={len(images or [])}")
 
-    session.messages.append({"role": "user", "content": user_message})
+    # Ảnh đính kèm → ghép image block vào user message để LLM (Bedrock Claude) XEM được.
+    # Bedrock Converse format: {"image": {"format": "png|jpeg|...", "source": {"bytes": <raw>}}}.
+    # _build_messages truyền nguyên content-list nên chỉ cần lưu đúng dạng block ở đây.
+    if images:
+        import base64
+        blocks = []
+        if user_message:
+            blocks.append({"text": user_message})
+        for img in images:
+            try:
+                fmt = (img.get("format") or "png").lower().replace("jpg", "jpeg")
+                raw = base64.b64decode(img.get("data", ""))
+                if raw:
+                    blocks.append({"image": {"format": fmt, "source": {"bytes": raw}}})
+            except Exception:
+                logger.warning(f"[{session.id[:8]}] bỏ qua 1 ảnh lỗi decode")
+        session.messages.append({"role": "user", "content": blocks or user_message})
+    else:
+        session.messages.append({"role": "user", "content": user_message})
     await save_session_messages(session.id, session.messages)
 
     if len(session.messages) == 1:

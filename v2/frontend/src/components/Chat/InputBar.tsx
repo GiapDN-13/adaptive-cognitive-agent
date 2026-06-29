@@ -3,9 +3,20 @@ import { Send, Paperclip, Square, X } from 'lucide-react'
 import { useChatStore } from '@/store/chatStore'
 
 interface Props {
-  onSend: (content: string) => void
+  onSend: (content: string, images?: { format: string; data: string; previewUrl: string }[]) => void
   onCancel: () => void
   onFileSelect: (files: File[]) => void
+}
+
+// Đọc File ảnh → base64 (bỏ tiền tố data:) + format cho Bedrock image block.
+async function fileToImagePayload(f: File): Promise<{ format: string; data: string }> {
+  const buf = await f.arrayBuffer()
+  let bin = ''
+  const bytes = new Uint8Array(buf)
+  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i])
+  const data = btoa(bin)
+  const format = (f.type.split('/')[1] || 'png').toLowerCase().replace('jpg', 'jpeg')
+  return { format, data }
 }
 
 interface Attachment {
@@ -42,19 +53,22 @@ export function InputBar({ onSend, onCancel, onFileSelect }: Props) {
     })
   }
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     const trimmed = input.trim()
     // Cho phép gửi nếu có text HOẶC có ảnh đính kèm
     if (!trimmed && attachments.length === 0) return
+    // Gửi ảnh + text TRONG CÙNG 1 message để LLM xem được ảnh (không upload rời).
+    let imgPayloads: { format: string; data: string; previewUrl: string }[] | undefined
     if (attachments.length) {
-      onFileSelect(attachments.map(a => a.file))
-      attachments.forEach(a => URL.revokeObjectURL(a.previewUrl))
-      setAttachments([])
+      const encoded = await Promise.all(attachments.map(async a => ({
+        ...(await fileToImagePayload(a.file)),
+        previewUrl: a.previewUrl,  // giữ để render trong chat (App tự revoke sau)
+      })))
+      imgPayloads = encoded
+      setAttachments([])  // KHÔNG revoke ở đây — previewUrl còn dùng để hiển thị
     }
-    if (trimmed) {
-      onSend(trimmed)
-      setInput('')
-    }
+    onSend(trimmed, imgPayloads)
+    setInput('')
   }
 
   const handleKeyDown = (e: KeyboardEvent) => {

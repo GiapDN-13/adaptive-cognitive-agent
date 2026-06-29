@@ -77,8 +77,18 @@ export function MessageBubble({ message }: Props) {
           prose-pre:bg-black/40 prose-pre:border prose-pre:border-white/10 prose-pre:rounded-lg prose-pre:text-xs
           prose-headings:mt-3 prose-headings:mb-1
         ">
-          <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
+          {message.content && <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>}
         </div>
+        {message.imageUrls && message.imageUrls.length > 0 && (
+          <div className="flex flex-wrap gap-2 mt-2">
+            {message.imageUrls.map((url, i) => (
+              <a key={i} href={url} target="_blank" rel="noopener noreferrer">
+                <img src={url} alt={`attachment ${i + 1}`}
+                  className="max-w-[200px] max-h-[200px] rounded-lg border border-white/15 object-contain" />
+              </a>
+            ))}
+          </div>
+        )}
         {message.metadata?.iterations != null && (
           <div className="mt-2 text-[10px] text-gray-500">
             {String(message.metadata.iterations)} iterations

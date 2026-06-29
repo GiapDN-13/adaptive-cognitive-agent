@@ -242,12 +242,12 @@ export function useWebSocket() {
     }
   }, [sessionId, handleMessage])
 
-  const sendMessage = useCallback((content: string) => {
+  const sendMessage = useCallback((content: string, images?: { format: string; data: string }[]) => {
     if (!wsRef.current?.isConnected) {
       useChatStore.getState().setConnectionStatus('error', 'Not connected')
       return
     }
-    wsRef.current.sendMessage(content)
+    wsRef.current.sendMessage(content, images)
     setAgentWorking(true)
   }, [setAgentWorking])
 

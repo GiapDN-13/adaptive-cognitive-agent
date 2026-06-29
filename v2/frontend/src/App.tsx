@@ -35,15 +35,17 @@ export default function App() {
     }
   }, [sessionId, containerStatus, startSession, resumeOrStart])
 
-  const handleSend = (content: string) => {
+  const handleSend = (content: string, images?: { format: string; data: string; previewUrl: string }[]) => {
     const msg: Message = {
       id: crypto.randomUUID(),
       role: 'user',
       content,
       timestamp: Date.now(),
+      imageUrls: images?.map(i => i.previewUrl),  // render ảnh trong khung chat
     }
     addMessage(msg)
-    sendMessage(content)
+    // Gửi base64 + format cho backend (ghép image block cho LLM); bỏ previewUrl khỏi payload.
+    sendMessage(content, images?.map(({ format, data }) => ({ format, data })))
   }
 
   const handleFileUpload = async (files: File[]) => {

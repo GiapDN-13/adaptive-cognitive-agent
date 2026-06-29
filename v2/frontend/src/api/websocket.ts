@@ -101,8 +101,8 @@ export class WebSocketManager {
     }
   }
 
-  sendMessage(content: string) {
-    this.send({ type: 'user_message', content })
+  sendMessage(content: string, images?: { format: string; data: string }[]) {
+    this.send({ type: 'user_message', content, images: images && images.length ? images : undefined })
   }
 
   sendApproval(requestId: string, approved: boolean, modifiedCommand?: string) {

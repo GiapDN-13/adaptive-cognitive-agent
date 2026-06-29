@@ -80,11 +80,14 @@ async def websocket_endpoint(
                     logger.info(f"[{session_id[:8]}] user_message: {message['content'][:50]}")
                     await cancel_agent()
                     from app.agent.loop import run_agent_loop
+                    # Ảnh đính kèm (paste/upload): frontend gửi list {format, data(base64)}.
+                    # Truyền xuống loop để ghép image block vào user message cho LLM xem được.
                     agent_task = asyncio.create_task(
                         run_agent_loop(
                             session=session,
                             user_message=message["content"],
                             ws_send=ws_send,
+                            images=message.get("images") or None,
                         )
                     )
 

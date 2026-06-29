@@ -8,11 +8,31 @@ SESSIONS_DIR = Path("./data/sessions")
 SESSION_INDEX_PATH = Path("./data/session_index.json")
 
 
+def _bytes_safe(obj):
+    """JSON-encode helper: image block giữ raw bytes (cho Bedrock) — không serialize JSON
+    được. Mã hoá bytes → {"__b64__": ...} khi lưu đĩa; _decode_b64 đảo lại khi load."""
+    if isinstance(obj, (bytes, bytearray)):
+        import base64
+        return {"__b64__": base64.b64encode(bytes(obj)).decode("ascii")}
+    raise TypeError(f"not serializable: {type(obj)}")
+
+
+def _decode_b64(obj):
+    if isinstance(obj, dict):
+        if "__b64__" in obj and len(obj) == 1:
+            import base64
+            return base64.b64decode(obj["__b64__"])
+        return {k: _decode_b64(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_decode_b64(x) for x in obj]
+    return obj
+
+
 async def save_session_messages(session_id: str, messages: list[dict]) -> None:
     SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
     path = SESSIONS_DIR / f"{session_id}.json"
     async with aiofiles.open(path, "w", encoding="utf-8") as f:
-        await f.write(json.dumps(messages, ensure_ascii=False, indent=2))
+        await f.write(json.dumps(messages, ensure_ascii=False, indent=2, default=_bytes_safe))
 
 
 async def load_session_messages(session_id: str) -> list[dict]:
@@ -22,7 +42,7 @@ async def load_session_messages(session_id: str) -> list[dict]:
     async with aiofiles.open(path, "r", encoding="utf-8") as f:
         content = await f.read()
     try:
-        return json.loads(content)
+        return _decode_b64(json.loads(content))
     except json.JSONDecodeError:
         return []
 
