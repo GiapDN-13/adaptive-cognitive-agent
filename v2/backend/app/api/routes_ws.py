@@ -16,8 +16,18 @@ async def websocket_endpoint(
 
     session = await sm.get(session_id)
     if not session:
-        await websocket.close(code=4004, reason="Session not found")
-        return
+        # Container sandbox có thể đã chết (Docker engine tắt hẳn). Thử PHỤC HỒI từ đĩa:
+        # nếu có lịch sử hội thoại → tạo container mới cùng id + nạp lại messages, KHÔNG
+        # bắt user mất phiên. Chỉ đóng 4004 khi thật sự không có gì để phục hồi.
+        try:
+            session = await sm.resurrect(session_id)
+        except Exception:
+            logger.exception(f"resurrect failed for {session_id}")
+            session = None
+        if not session:
+            await websocket.close(code=4004, reason="Session not found")
+            return
+        logger.info(f"resurrected session {session_id} (container chết, phục hồi từ đĩa)")
 
     await websocket.accept()
     await sm.touch(session_id)

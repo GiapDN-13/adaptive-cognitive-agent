@@ -37,6 +37,33 @@ class SessionManager:
     async def get(self, session_id: str) -> Session | None:
         return self._sessions.get(session_id)
 
+    async def resurrect(self, session_id: str) -> Session | None:
+        """Phục hồi session khi container sandbox ĐÃ CHẾT (vd Docker engine tắt hẳn rồi
+        bật lại). Rehydrate chỉ cứu được container CÒN SỐNG; còn đây: nếu có messages trên
+        ĐĨA (mount host nên sống qua mọi sự cố) → TẠO CONTAINER MỚI cùng session_id + nạp
+        lại messages → user gõ 'Tiếp tục' vẫn còn context (chỉ mất file trong /workspace cũ,
+        nhưng lịch sử hội thoại + quyết định thì còn). Trả None nếu không có gì để phục hồi."""
+        if session_id in self._sessions:
+            return self._sessions[session_id]
+        try:
+            messages = await load_session_messages(session_id)
+        except Exception:
+            messages = []
+        if not messages:
+            return None  # không có lịch sử → không phải session cũ, để caller tạo mới
+        container_id, app_port = await self._docker.create_container(
+            session_id, ContainerConfig(image=settings.sandbox_image)
+        )
+        session = Session(
+            id=session_id,
+            container_id=container_id,
+            container_config=ContainerConfig(image=settings.sandbox_image),
+            app_port=app_port,
+            messages=messages,
+        )
+        self._sessions[session_id] = session
+        return session
+
     async def rehydrate(self) -> int:
         """Sau khi backend restart (sessions in-memory mất), khôi phục lại session từ
         các container sandbox CÒN SỐNG. Container đặt tên smartagent-{id} + có label,
