@@ -51,9 +51,20 @@ class SessionManager:
             messages = []
         if not messages:
             return None  # không có lịch sử → không phải session cũ, để caller tạo mới
-        container_id, app_port = await self._docker.create_container(
-            session_id, ContainerConfig(image=settings.sandbox_image)
-        )
+        # Ưu tiên START LẠI container cũ nếu nó chỉ dừng (Exited) — giữ nguyên /workspace
+        # (sản phẩm agent đã build còn nguyên!). Chỉ tạo MỚI khi container biến mất hẳn
+        # (tránh 409 name-conflict khi create trùng tên container stopped).
+        container_id = app_port = None
+        try:
+            restarted = await self._docker.restart_stopped_sandbox(session_id)
+            if restarted:
+                container_id, app_port = restarted
+        except Exception:
+            container_id = None
+        if not container_id:
+            container_id, app_port = await self._docker.create_container(
+                session_id, ContainerConfig(image=settings.sandbox_image)
+            )
         session = Session(
             id=session_id,
             container_id=container_id,

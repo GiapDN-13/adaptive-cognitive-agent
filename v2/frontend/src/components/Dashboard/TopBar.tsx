@@ -15,6 +15,10 @@ export function TopBar({ onStart, onEnd, onHistoryOpen, onRightPanelToggle, righ
   const { containerStatus, sessionId, isAgentWorking, agentStatus } = useChatStore()
   const [stats, setStats] = useState({ cpu_percent: 0, memory_mb: 0 })
   const [appUrl, setAppUrl] = useState<string | null>(null)
+  // appPort: cổng host đã map (có ngay cả khi app CHƯA listening) — để hiện nút Preview
+  // "thử mở" thay vì ẩn hoàn toàn khi app chết. listening: app thật sự đang trả lời.
+  const [appPort, setAppPort] = useState<number | null>(null)
+  const [appListening, setAppListening] = useState(false)
 
   useEffect(() => {
     if (!sessionId || containerStatus !== 'running') return
@@ -29,9 +33,13 @@ export function TopBar({ onStart, onEnd, onHistoryOpen, onRightPanelToggle, righ
         setStats({ cpu_percent: s.cpu_percent, memory_mb: s.memory_mb })
         const res = await fetch(`/api/sessions/${sessionId}/app`)
         const data = await res.json()
-        if (!cancelled) setAppUrl(data.listening ? data.url : null)
+        if (!cancelled) {
+          setAppListening(!!data.listening)
+          setAppUrl(data.listening ? data.url : null)
+          setAppPort(data.app_port ?? null)
+        }
       } catch {
-        if (!cancelled) setAppUrl(null)
+        if (!cancelled) { setAppListening(false); setAppUrl(null) }
       }
     }
     const interval = setInterval(tick, 5000)
@@ -93,7 +101,8 @@ export function TopBar({ onStart, onEnd, onHistoryOpen, onRightPanelToggle, righ
 
       {/* Actions */}
       <div className={`flex items-center gap-1.5 ${containerStatus !== 'running' ? 'ml-auto' : ''}`}>
-        {appUrl && (
+        {appListening && appUrl ? (
+          // App đang chạy → nút xanh, mở ngay.
           <a
             href={appUrl}
             target="_blank"
@@ -103,7 +112,19 @@ export function TopBar({ onStart, onEnd, onHistoryOpen, onRightPanelToggle, righ
           >
             <ExternalLink size={12} /> Open App
           </a>
-        )}
+        ) : appPort ? (
+          // Cổng đã map nhưng app CHƯA trả lời (chưa start / đang boot / đã chết) →
+          // vẫn cho user nút "thử mở" thay vì ẩn hoàn toàn. Mở thẳng host port.
+          <a
+            href={`http://localhost:${appPort}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/[0.06] hover:bg-white/[0.12] text-gray-300 text-xs font-medium transition"
+            title={`App chưa phản hồi trên cổng ${appPort} — có thể đang khởi động hoặc chưa chạy. Bấm để thử mở.`}
+          >
+            <ExternalLink size={12} /> App :{appPort} (thử mở)
+          </a>
+        ) : null}
         <button
           onClick={onHistoryOpen}
           className="p-1.5 hover:bg-white/[0.06] rounded-md transition text-gray-400 hover:text-gray-200"

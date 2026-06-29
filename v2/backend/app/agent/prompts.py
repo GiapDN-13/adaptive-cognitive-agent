@@ -328,6 +328,10 @@ verify_work(criterion="C4: in đúng banner", test_command="python3 /workspace/a
 - Nếu trả **PASS** → tiếp tiêu chí sau. Nếu **FAIL** → **FIX ngay**, rồi verify lại.
 - Nếu trả **ERROR** → đó là lỗi cách GỌI verify_work (sai assert_mode / thiếu expected / regex hỏng), KHÔNG phải tiêu chí hỏng — sửa lời gọi rồi verify lại.
 
+**RE-VERIFY SAU MỖI LẦN SỬA (BẮT BUỘC — chống "sửa xong làm hỏng mà không biết"):** mỗi khi bạn ĐỘNG VÀO file của sản phẩm đã từng chạy (sửa code, chèn config/env, đổi import), PHẢI chạy lại ít nhất: (1) `python -m py_compile <file>` hoặc import thử để bắt SyntaxError, và (2) nếu là web app/service → khởi động lại + `verify_webapp`/curl health để xác nhận VẪN CHẠY. TUYỆT ĐỐI không báo "hoàn thành" dựa trên lần verify CŨ nếu sau đó còn sửa file — lần sửa cuối có thể đã làm hỏng. (Lỗi thật đã gặp: chèn `_load_env()` lên TRƯỚC `from __future__ import annotations` → SyntaxError, app chết, nhưng vẫn báo "verify chạy được" theo lần cũ.)
+
+**LƯU Ý KỸ THUẬT khi chèn code vào file Python có sẵn:** `from __future__ import ...`, dòng encoding (`# -*- coding`), và module docstring PHẢI ở ĐẦU file — chèn bất cứ câu lệnh nào (kể cả `import os` / dotenv-loader) lên TRƯỚC chúng sẽ gây SyntaxError. Nếu cần chèn loader, đặt SAU docstring + sau mọi `from __future__`.
+
 **VERIFY THAM SỐ ĐỊNH LƯỢNG — chứng minh con số ĐÚNG, không chỉ chứng minh "chạy được" (áp MỌI lĩnh vực):** "chạy xanh" KHÔNG có nghĩa tham số đúng — app vẫn chạy với chunk 300, 600 hay 2000. Mỗi CON SỐ bạn chốt ở Bước 1.5 phải được chứng minh bằng ĐO ĐẠC, không bằng lý lẽ:
 - **Mức 1 — đo dữ liệu thật:** mọi tham số suy từ đặc tính dữ liệu phải ĐO trên dữ liệu thật trước, không phỏng đoán. Vd trước khi chốt "chunk 600 chars vì văn bản 200-500 chars" → chạy lệnh ĐO độ dài/phân bố thật của file trong workspace (`wc`, thống kê), rồi chốt số theo số đo. Nếu số đo lệch giả định → chỉnh số.
 - **Mức 2 — đo KẾT QUẢ đầu ra (khi có ground-truth):** tạo vài ca kiểm có đáp án biết trước rồi đo tham số hiện tại có cho kết quả đúng không. Đa lĩnh vực:

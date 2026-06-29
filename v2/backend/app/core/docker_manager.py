@@ -98,6 +98,32 @@ class DockerManager:
 
         await asyncio.to_thread(_destroy)
 
+    async def restart_stopped_sandbox(self, session_id: str) -> tuple[str, int | None] | None:
+        """Nếu container sandbox của session_id còn TỒN TẠI nhưng đã dừng (Exited) —
+        START LẠI nó (giữ nguyên /workspace, không mất sản phẩm) thay vì tạo mới (tránh
+        409 name-conflict). Trả (container_id, host_port) nếu start được, None nếu không
+        còn container nào để khôi phục."""
+        def _restart():
+            try:
+                c = self._client.containers.get(f"smartagent-{session_id}")
+            except NotFound:
+                return None
+            try:
+                c.start()
+            except Exception:
+                pass
+            c.reload()
+            host_port = None
+            try:
+                b = c.attrs["NetworkSettings"]["Ports"].get("8080/tcp")
+                if b:
+                    host_port = int(b[0]["HostPort"])
+            except (KeyError, IndexError, TypeError, ValueError):
+                host_port = None
+            return c.id, host_port
+
+        return await asyncio.to_thread(_restart)
+
     async def exec_command(
         self, container_id: str, command: str, timeout: int = 60
     ) -> AsyncGenerator[str, None]:
