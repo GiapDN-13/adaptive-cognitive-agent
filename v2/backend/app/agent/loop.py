@@ -379,6 +379,13 @@ async def _run_loop(
     # suy nghĩ CHƯA thể hiện chấm điểm có trọng số cho quyết định kiến trúc → chặn báo
     # xong 1 lần, ép bổ sung. Cap 1 lần để không treo.
     d6_gate_nudged = False
+    # T12 (CHỐNG SA-ĐÀ-BUILD): ~1/3 trace agent lạc vào vòng build-sửa-build (write_file
+    # rất nhiều, chưa hề gọi giám khảo) — tốn thời gian + tụt điểm. Stagnation không bắt
+    # vì write/verify liên tục làm churn reset. Đếm write_file: vượt ngưỡng mà chưa
+    # spawn_evaluator → nudge ép DỪNG, đi nghiệm thu (giám khảo phán THIẾU mới làm tiếp).
+    write_file_count = 0
+    sprawl_nudged = False
+    SPRAWL_WRITE_THRESHOLD = 8
 
     responded = False
     for iteration in range(iter_budget):
@@ -550,6 +557,19 @@ async def _run_loop(
                         })
                         continue  # bỏ qua thực thi tool này, sang block kế
 
+                # T12 CHỐNG SA-ĐÀ-BUILD: đếm write_file; vượt ngưỡng mà CHƯA gọi giám khảo
+                # → agent đang lạc vào vòng build-sửa-build. Đặt cờ để chèn nudge SAU khi
+                # tool này thực thi (dạng text block, KHÔNG đụng toolResult — tránh trùng id).
+                emit_sprawl_nudge = False
+                if not is_subagent and tool_name == "write_file":
+                    write_file_count += 1
+                    if (write_file_count >= SPRAWL_WRITE_THRESHOLD
+                            and "spawn_evaluator" not in tools_used_ever
+                            and not sprawl_nudged):
+                        sprawl_nudged = True
+                        emit_sprawl_nudge = True
+                        await ws_send({"type": "agent_status", "tool": "thinking", "detail": "cổng chống sa-đà-build"})
+
                 tool_desc = tool_input.get("query") or tool_input.get("command") or tool_input.get("path") or ""
                 await ws_send({
                     "type": "agent_status",
@@ -580,6 +600,17 @@ async def _run_loop(
                         "content": [{"text": result}],
                     }
                 })
+
+                # T12: chèn nudge chống sa-đà-build (text block, sau toolResult của write_file).
+                if emit_sprawl_nudge:
+                    tool_results.append({"text": (
+                        f"[SYSTEM — CỔNG CHỐNG SA-ĐÀ: bạn đã tạo/sửa file {write_file_count} lần "
+                        "nhưng CHƯA hề gọi giám khảo mù. Dấu hiệu đang sa vào vòng build-sửa-build. "
+                        "DỪNG viết file mới. Thay vào đó: (1) `verify_work` chốt phần đã CHẠY ĐÚNG, "
+                        "(2) gọi `spawn_evaluator` nghiệm thu sản phẩm HIỆN TẠI. Giám khảo phán THIẾU "
+                        "→ mới làm tiếp ĐÚNG phần thiếu. Đừng build lan man khi chưa biết cái đã có "
+                        "đúng tới đâu.]"
+                    )})
 
                 # Plateau detection: same tool+input repeated ≥3 times → inject a
                 # root-cause nudge once (don't spam). Helps break "rebuild/retry blindly" loops.
