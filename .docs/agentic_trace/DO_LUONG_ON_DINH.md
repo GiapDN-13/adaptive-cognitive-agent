@@ -202,3 +202,26 @@ Thêm D10 (verify định lượng, đa lĩnh vực). Trace v7 = **10/10**:
 Rubric đã đủ 10 trụ: D1 quy mô · D2 nội dung · D3 phân rã · D4 đa nhánh · D5 tự phản chiếu ·
 D6 chấm điểm trọng số · D7 biết-không-biết · D8 chiều sâu định lượng · D9 build khớp quyết định ·
 D10 verify định lượng (chứng minh số ĐÚNG bằng đo). Mỗi trụ ánh xạ 1 feedback thật của sếp.
+
+---
+
+## CẬP NHẬT 9 — Phân phối điểm THẬT (harness blob đã sửa) + phát hiện sa-đà-build
+
+BÀI HỌC ĐO: batch đầu (6,7,1/10) phần lớn là LỖI ĐO — blob[-12000:] cắt mất Bước 0 khi agent
+build dài → giám khảo chỉ thấy phần debug cuối → D1-D3 fail oan. Sửa harness (giữ đầu 9k + cuối
+7k) → điểm thật cao hẳn.
+
+Phân phối với harness ĐÚNG (file bền: backend/_data/dist_accum.txt):
+- 10/10, 9/10, 8/10 (+ 2 trace đang chạy nốt).
+- Trung bình ~9/10, SÀN ~8/10. "10/10" là cận trên, không phải mọi lần.
+- Trụ hay rớt: D10 (verify định lượng), D6/D1 lác đác — các trụ khó nhất, phụ thuộc run đó
+  agent có chịu đo/chấm điểm không.
+
+PHÁT HIỆN VẤN ĐỀ THẬT (chưa sửa): ~1/3 trace agent SA ĐÀ BUILD DÀI (1600-1800 events, 13 file,
+chưa tới giám khảo) → tốn thời gian + dễ rớt 1-2 trụ. Cổng stagnation KHÔNG bắt vì agent vẫn
+write_file/verify liên tục → churn_streak reset → cổng tưởng "đang tiến bộ". Cần cổng "build
+nhiều nhưng chưa nghiệm thu" (vd >N write_file mà chưa spawn_evaluator, hoặc sửa cùng file
+nhiều lần) → ép dừng đi giám khảo. Đây là nguồn biến thiên chính còn lại.
+
+KẾT LUẬN "10/10 ổn định?": KHÔNG tuyệt đối, nhưng dao động HẸP (~8-10/10) với harness đúng —
+cao và ổn định khá. 10 trụ đều có cổng cứng đỡ. Còn 1 lỗ: sa đà build dài.
