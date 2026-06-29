@@ -225,3 +225,18 @@ nhiều lần) → ép dừng đi giám khảo. Đây là nguồn biến thiên 
 
 KẾT LUẬN "10/10 ổn định?": KHÔNG tuyệt đối, nhưng dao động HẸP (~8-10/10) với harness đúng —
 cao và ổn định khá. 10 trụ đều có cổng cứng đỡ. Còn 1 lỗ: sa đà build dài.
+
+---
+
+## CẬP NHẬT 10 — T12 chống sa-đà-build: cắt được trace 1600-event
+
+Thêm T12 (loop.py): write_file >=8 mà chưa spawn_evaluator → nudge 1 lần ép dừng, đi nghiệm thu.
+Verify ca gài lỗi (test_sprawl_gate): nudge đúng 1 lần, file vẫn ghi đủ — PASS.
+
+2 trace với T12 active: 9/10, 8/10 (TB ~8.5/10). Quan trọng: trace cuối SPRAWL-GATE BẮN 1 lần
+ở 415 events — agent KHÔNG còn lạc 1600-event như trước T12. T12 kéo agent về nghiệm thu sớm.
+
+PHÂN PHỐI ĐIỂM TỔNG (harness blob đúng + T12): dao động 8-10/10, TB ~9/10, SÀN 8/10. Đã cắt
+được nguồn biến thiên chính (sa đà build dài). Trụ hay rớt còn lại: D10 (verify định lượng) —
+agent đôi khi không đủ kiên nhẫn tạo ca ground-truth; D9/D1/D6 lác đác. Đây là variance LLM
+tự nhiên ở mức chấp nhận được, không còn lỗ hổng cấu trúc lớn.
