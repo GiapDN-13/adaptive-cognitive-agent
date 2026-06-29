@@ -76,6 +76,12 @@ check("proc: pgrep", gates.detect_process_check_intent('pgrep -f uvicorn'))
 check("proc: ls khong phai", not gates.detect_process_check_intent('ls -la /workspace'))
 check("proc: curl health khong phai", not gates.detect_process_check_intent('curl -s localhost:8080/'))
 
+# ---- extract_missing_command (nudge tong quat command-not-found) ----
+check("missing: bash ps", gates.extract_missing_command('bash: line 1: ps: command not found') == 'ps')
+check("missing: tree", gates.extract_missing_command('[exit_code=127]\nbash: tree: command not found') == 'tree')
+check("missing: path netstat", gates.extract_missing_command('bash: /usr/bin/netstat: command not found') == 'netstat')
+check("missing: output thuong -> None", gates.extract_missing_command('total 8\ndrwxr-xr-x') is None)
+
 
 # ---- is_expired_token vs is_transient_server_error (must NOT overlap) ----
 class ExpiredTokenException(Exception): pass

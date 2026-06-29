@@ -125,6 +125,20 @@ def detect_kill_port_intent(command: str) -> bool:
     return False
 
 
+def extract_missing_command(result: str) -> str | None:
+    """Nếu output shell báo 'command not found', trích TÊN lệnh thiếu (vd 'ps', 'tree').
+    Trị gốc cho mọi lệnh không có trong slim container (không chỉ ps): agent hay thử lại
+    cùng lệnh thiếu nhiều lần. Đếm theo TÊN lệnh để nudge khi lặp. None nếu không phải lỗi này."""
+    if not result or "command not found" not in result.lower():
+        return None
+    import re
+    # bash: 'bash: line 1: ps: command not found' ; sh: 'sh: 1: tree: not found'
+    m = re.search(r"(?:line\s*\d+:\s*|:\s*\d+:\s*)?([\w./-]+):\s*command not found", result, re.IGNORECASE)
+    if m:
+        return m.group(1).strip().split("/")[-1]
+    return "?"
+
+
 def detect_process_check_intent(command: str) -> bool:
     """True nếu lệnh đang cố LIỆT KÊ/TÌM tiến trình bằng `ps`/`pgrep`/`top`/`htop` — các
     lệnh slim container (python:3.11-slim) KHÔNG có (exit 'command not found'). Agent hay

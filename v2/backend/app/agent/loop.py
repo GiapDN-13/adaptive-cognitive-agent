@@ -405,6 +405,11 @@ async def _run_loop(
     write_file_count = 0
     sprawl_nudged = False
     SPRAWL_WRITE_THRESHOLD = 8
+    # T13 (CHỐNG LẶP LỆNH THIẾU): slim container thiếu nhiều lệnh (ps/tree/htop/...);
+    # agent hay thử lại CÙNG lệnh thiếu tới khi cạn iteration. Đếm theo TÊN lệnh thiếu,
+    # lặp ≥2 lần → nudge dùng python/builtin thay thế. Trị gốc cho MỌI lệnh, không chỉ ps.
+    missing_cmd_counts: dict[str, int] = {}
+    missing_cmd_nudged: set[str] = set()
 
     responded = False
     for iteration in range(iter_budget):
@@ -619,6 +624,23 @@ async def _run_loop(
                         "content": [{"text": result}],
                     }
                 })
+
+                # T13: lệnh báo 'command not found' lặp lại cùng tên → nudge dùng builtin
+                # (trị gốc cho MỌI lệnh thiếu trong slim container, không riêng ps).
+                if tool_name == "shell_exec":
+                    _miss = gates.extract_missing_command(result or "")
+                    if _miss:
+                        missing_cmd_counts[_miss] = missing_cmd_counts.get(_miss, 0) + 1
+                        if missing_cmd_counts[_miss] >= 2 and _miss not in missing_cmd_nudged:
+                            missing_cmd_nudged.add(_miss)
+                            tool_results.append({"text": (
+                                f"[SYSTEM — LỆNH KHÔNG TỒN TẠI: `{_miss}` KHÔNG có trong sandbox "
+                                "(python:3.11-slim — thiếu nhiều CLI tool). Bạn đã thử ≥2 lần, ĐỪNG "
+                                "lặp lại lệnh này. Dùng thay thế: Python builtin (os/glob/subprocess/"
+                                "socket/urllib), hoặc lệnh coreutils có sẵn (ls/cat/grep/find), hoặc "
+                                f"`pip install` nếu cần. Vd thay `{_miss}` bằng `python3 -c \"...\"`. "
+                                "Đổi CÁCH làm, không thử lại cùng lệnh thiếu.]"
+                            )})
 
                 # T12: chèn nudge chống sa-đà-build (text block, sau toolResult của write_file).
                 if emit_sprawl_nudge:
