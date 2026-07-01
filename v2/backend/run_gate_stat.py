@@ -100,7 +100,13 @@ async def main():
             print(f"  run {i+1}: SKIP (think {len(blob)}, writes={wcount['n']}, gate={gate_n})", flush=True); continue
         valid+=1; fired += 1 if gate_n else 0
         for d in dims: tally[d]+= 1 if res[d] else 0
-        print(f"  run {i+1}: "+" ".join(f"{d}={'P' if res[d] else 'F'}" for d in dims)+f" (gate_fired={gate_n}, writes={wcount['n']})", flush=True)
+        line = "  run: "+" ".join(f"{d}={'P' if res[d] else 'F'}" for d in dims)+f" (gate={gate_n},writes={wcount['n']},score={sum(1 for d in dims if res[d])}/{NDIM})"
+        print(line, flush=True)
+        # APPEND vào file tích lũy bền (sống qua restart) — mỗi trace 1 dòng.
+        try:
+            with open("/app/data/dist_accum.txt", "a", encoding="utf-8") as f:
+                f.write(line.strip()+"\n")
+        except Exception: pass
     print(f"\n{'='*52}")
     if valid:
         for d in dims: print(f"  {d}: {tally[d]}/{valid} ({tally[d]/valid*100:.0f}%)")
