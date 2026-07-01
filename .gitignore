@@ -30,3 +30,8 @@ rag_test_events.json
 
 # Vendored ECC bundle (separate 74M repo) — not committed here
 v2/backend/vendor/
+
+# Trace events chứa creds seed lúc test — KHÔNG commit (chỉ giữ báo cáo .md)
+.docs/agentic_trace/*_events*.json
+.docs/agentic_trace/trace_events*.json
+v2/backend/_data/
